@@ -2,6 +2,7 @@ import { Link, NavLink, Outlet, useNavigate } from 'react-router-dom';
 import {
   BarChart3,
   CalendarDays,
+  Eye,
   FolderKanban,
   GanttChartSquare,
   LayoutDashboard,
@@ -27,7 +28,7 @@ const nav: Array<{ to: string; label: string; icon: React.ReactNode; role?: Role
 ];
 
 export function AppLayout() {
-  const { profile, role, signOut, setDemoRole } = useAuth();
+  const { profile, role, actualRole, isViewingAs, signOut, setDemoRole, setViewAsRole } = useAuth();
   const navigate = useNavigate();
 
   const handleSignOut = async () => {
@@ -37,8 +38,43 @@ export function AppLayout() {
 
   const items = nav.filter((n) => !n.role || n.role === role);
 
+  // "View as manager" toggle is offered to real-mode admins. Clicking it
+  // also navigates home so the next paint doesn't bounce off a now-
+  // forbidden admin-only route guard.
+  const enterManagerView = () => {
+    if (!setViewAsRole) return;
+    setViewAsRole('manager');
+    navigate('/');
+  };
+  const exitManagerView = () => {
+    if (!setViewAsRole) return;
+    setViewAsRole(null);
+  };
+
   return (
     <div className="flex min-h-screen w-full flex-col">
+      {/* "Viewing as" banner — only shown when admin is previewing as manager. */}
+      {isViewingAs && (
+        <div
+          data-testid="view-as-banner"
+          className="sticky top-0 z-50 flex items-center gap-3 border-b border-amber-300/50 bg-amber-100 px-4 py-2 text-sm text-amber-900 dark:border-amber-700/40 dark:bg-amber-950/70 dark:text-amber-100"
+        >
+          <Eye className="h-4 w-4 shrink-0" />
+          <span className="flex-1 truncate">
+            <strong>Viewing as Gavin (manager)</strong> — UI preview only. The DB session is still your admin login; payload data is unchanged.
+          </span>
+          <Button
+            data-testid="exit-view-as"
+            variant="outline"
+            size="sm"
+            className="border-amber-400 bg-amber-50 text-amber-900 hover:bg-amber-100 dark:border-amber-700 dark:bg-amber-900 dark:text-amber-100"
+            onClick={exitManagerView}
+          >
+            Back to admin
+          </Button>
+        </div>
+      )}
+
       {/* Top bar */}
       <header className="sticky top-0 z-40 border-b bg-background/95 backdrop-blur">
         <div className="mx-auto flex h-14 w-full max-w-6xl items-center gap-3 px-4">
@@ -69,6 +105,7 @@ export function AppLayout() {
             ))}
           </nav>
           <div className="ml-auto flex items-center gap-2">
+            {/* Demo-mode toggle: swap which DEMO_PROFILE is "you". */}
             {env.demoMode && setDemoRole && (
               <div
                 data-testid="demo-role-toggle"
@@ -96,6 +133,20 @@ export function AppLayout() {
                   manager
                 </button>
               </div>
+            )}
+            {/* Real-mode "View as manager" — only available to actual admins. */}
+            {!env.demoMode && actualRole === 'admin' && setViewAsRole && (
+              <Button
+                data-testid="view-as-toggle"
+                variant="outline"
+                size="sm"
+                className="hidden sm:inline-flex"
+                onClick={isViewingAs ? exitManagerView : enterManagerView}
+                title={isViewingAs ? 'Return to admin view' : "Preview Gavin's manager view"}
+              >
+                <Eye className="h-3.5 w-3.5" />
+                {isViewingAs ? 'Back to admin' : 'View as Gavin'}
+              </Button>
             )}
             <span className="hidden text-xs text-muted-foreground sm:inline">
               {profile?.display_name}

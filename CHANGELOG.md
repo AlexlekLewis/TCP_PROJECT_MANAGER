@@ -6,6 +6,33 @@ Format: one section per session, newest on top. Each entry: what changed, why, f
 
 ---
 
+## 2026-05-22 (view-as) — Admin "View as Gavin" preview toggle + return banner
+
+Alex's ask: from his admin login, be able to flip into Gavin's manager view and back, so he can sanity-check what Gavin actually sees. Shipped as a UI-only preview (no real auth swap — explicit caveat below).
+
+**[src/context/AuthContext.tsx](src/context/AuthContext.tsx)**
+- New `actualRole` (truth from the DB profile) alongside `role` (effective, may be view-as override).
+- New `viewAsRole` state, persisted in `localStorage` under `tricoat:viewAsRole`.
+- `setViewAsRole(role | null)` exposed only when `actualRole === 'admin'` AND not in demo mode.
+- `isViewingAs` boolean for UI gating.
+- `signOut` clears the view-as override so the next login starts in true role.
+
+**[src/components/layout/AppLayout.tsx](src/components/layout/AppLayout.tsx)**
+- "View as Gavin" button in the top bar (admin + real-mode only). Click → flips effective role to manager AND navigates to `/` so route guards don't bounce off an admin-only page mid-toggle.
+- Sticky amber banner across the top of every page when `isViewingAs === true`: *"Viewing as Gavin (manager) — UI preview only."* with a **Back to admin** button.
+- Existing demo-mode role toggle preserved (and its data-testids); the view-as button only appears in real mode.
+
+**Behaviour**
+- While previewing, every UI gating (route guards via `RequireRole`, `useCanSeeFinancials()`, nav-item filter) treats Alex as manager. Admin-only menu items disappear. Dollar values hidden. Manager Landing renders on `/`.
+- One click back to admin restores full access. The override survives page refresh (localStorage) until cleared.
+
+**Honest caveat (documented in the banner copy)**
+- This is a *client-side* UI preview, not a real impersonation. Alex's Supabase JWT is still admin, so the underlying queries return admin-level data; the masking is only at the React render layer. A user opening DevTools while in preview would still see the unmasked payloads. For a true impersonation we'd need a service-role-mediated sign-in helper (out of scope tonight).
+
+**Quality** — 52/52 vitest, 102/102 Playwright, typecheck + build clean. No new specs added; the existing role-toggle suite still passes because the demo flow is unchanged.
+
+---
+
 ## 2026-05-22 (profit model) — Per-worker cost / weekly / charge-out rates + project target profit + admin weekly P&L
 
 Alex's ask after the security audit: track project profit health and the weekly cost-vs-revenue of the team. With per-worker breakdown:
