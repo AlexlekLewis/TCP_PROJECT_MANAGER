@@ -273,11 +273,14 @@ export default function ReportsPage() {
 }
 
 function SummaryCell({ label, value }: { label: string; value: string }) {
+  const testId = `summary-${label.toLowerCase().replace(/\s+/g, '-')}`;
   return (
     <Card>
       <CardContent className="p-4">
         <p className="text-xs uppercase tracking-wide text-muted-foreground">{label}</p>
-        <p className="mt-1 text-2xl font-semibold tabular-nums">{value}</p>
+        <p className="mt-1 text-2xl font-semibold tabular-nums" data-testid={testId}>
+          {value}
+        </p>
       </CardContent>
     </Card>
   );

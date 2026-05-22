@@ -112,17 +112,19 @@ export function AppLayout() {
         <Outlet />
       </main>
 
-      {/* Mobile bottom nav */}
+      {/* Mobile bottom nav — render every authorised item; on tight screens
+          (admin's 7 items at ~360 px) the row scrolls horizontally instead
+          of silently dropping anything from view. */}
       <nav className="fixed inset-x-0 bottom-0 z-40 border-t bg-background/95 backdrop-blur md:hidden">
-        <div className="mx-auto flex h-16 max-w-md items-center justify-around">
-          {items.slice(0, 5).map((n) => (
+        <div className="mx-auto flex h-16 max-w-md items-center justify-around overflow-x-auto px-1">
+          {items.map((n) => (
             <NavLink
               key={n.to}
               to={n.to}
               end={n.to === '/'}
               className={({ isActive }) =>
                 cn(
-                  'flex flex-col items-center gap-1 px-2 text-[11px]',
+                  'flex shrink-0 flex-col items-center gap-1 px-2 text-[11px]',
                   isActive ? 'text-foreground' : 'text-muted-foreground',
                 )
               }

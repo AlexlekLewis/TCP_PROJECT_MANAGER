@@ -18,9 +18,8 @@ test.describe('Tricoat PM smoke', () => {
 
   test('week calendar opens day entry dialog', async ({ page }) => {
     await page.goto('/calendar');
-    // Click today
-    const today = await page.locator('[class*="ring-1 ring-ring"]').first();
-    await today.click();
+    // Click today — uses the stable data-testid set in WeekCalendar.
+    await page.getByTestId('today-cell').click();
     await expect(page.getByText(/Log hours per worker/i)).toBeVisible();
   });
 

@@ -108,12 +108,36 @@ export function useDeleteProject() {
   });
 }
 
-/** Returns true if the project can be hard-deleted (no referencing entries). */
-export function useProjectCanDelete(id: string | null | undefined) {
+/**
+ * Returns true if the project can be hard-deleted (no referencing entries).
+ *
+ * Demo mode: synchronous check against the in-memory store.
+ * Real mode: two cheap `head: true, count: 'exact'` queries on
+ * `time_entries` + `material_entries`; returns `undefined` while loading
+ * so the UI can render "Checking…" instead of misleadingly enabling Delete.
+ */
+export function useProjectCanDelete(id: string | null | undefined): boolean | undefined {
   const store = useDemoStore();
+  const { data: counts } = useQuery<{ te: number; me: number }>({
+    queryKey: ['project-entry-counts', id ?? 'none'],
+    enabled: !!id && !env.demoMode,
+    queryFn: async () => {
+      const [te, me] = await Promise.all([
+        supabase
+          .from('time_entries')
+          .select('id', { count: 'exact', head: true })
+          .eq('project_id', id!),
+        supabase
+          .from('material_entries')
+          .select('id', { count: 'exact', head: true })
+          .eq('project_id', id!),
+      ]);
+      return { te: te.count ?? 0, me: me.count ?? 0 };
+    },
+    staleTime: 30_000,
+  });
   if (!id) return false;
   if (env.demoMode) return !store.projectHasEntries(id);
-  // Server-side: we can't cheaply check without a query; allow the attempt and
-  // let `useDeleteProject` translate the FK error into a friendly message.
-  return true;
+  if (!counts) return undefined; // still loading
+  return counts.te === 0 && counts.me === 0;
 }

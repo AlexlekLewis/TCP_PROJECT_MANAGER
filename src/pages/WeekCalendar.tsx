@@ -122,6 +122,7 @@ export default function WeekCalendarPage() {
           return (
             <Card
               key={iso}
+              data-testid={isToday ? 'today-cell' : `day-cell-${iso}`}
               className={cn(
                 'cursor-pointer transition-shadow hover:shadow-md',
                 isToday && 'ring-1 ring-ring',

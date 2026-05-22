@@ -6,6 +6,48 @@ Format: one section per session, newest on top. Each entry: what changed, why, f
 
 ---
 
+## 2026-05-22 (even later) — Dev-team review #2 + payroll-integrity hardening
+
+Five blind specialist reviews (FE / Postgres / QA / AppSec / Product) audited the codebase end-to-end. Synthesised in [docs/dev-team-review-2.md](docs/dev-team-review-2.md). Consensus verdict: **"safe to keep building, not yet safe to cut a payroll cheque from."** Ten fixes applied tonight; eight deferred to dedicated sessions.
+
+**Backend — payroll-attribution integrity** ([supabase/migrations/20260522000001_payroll_integrity_hardening.sql](supabase/migrations/20260522000001_payroll_integrity_hardening.sql))
+- `time_entries.created_by` (and `material_entries`, `voice_logs`) now `default auth.uid()` AND the insert RLS policies enforce `created_by = auth.uid()`. A compromised manager session can no longer attribute hours to another user.
+- `workers.hourly_rate` no longer world-readable. New `workers_public` view (security_invoker, no rate column) + `get_worker_rate(uuid)` SECURITY DEFINER function returning the rate only when `is_admin()`. When Alex adds employee #3, their pay rate stays admin-only.
+- `audit_log.row_id` for `week_locks` now deterministic via `uuid_for_week(date) = md5(date)::uuid` so audit rows join back to the locked week.
+
+**Frontend — high-impact bugs**
+- **[src/components/layout/AppLayout.tsx](src/components/layout/AppLayout.tsx)** — mobile bottom nav previously `.slice(0, 5)` which silently dropped Workers + Admin (positions 6 + 7) for admin viewing on phone. Now scrolls horizontally with `overflow-x-auto` + `shrink-0` so the whole nav is reachable.
+- **[src/hooks/useTimeEntries.ts](src/hooks/useTimeEntries.ts)** — new `useBatchCreateTimeEntries` does a single `insert([...])` so "Same as yesterday" is atomic. Network drop mid-loop no longer produces a half-cloned day.
+- **[src/components/features/DayEntryDialog.tsx](src/components/features/DayEntryDialog.tsx)** — `cloneYesterday` rewritten to use the batch hook.
+- **[src/hooks/useProjects.ts](src/hooks/useProjects.ts)** — `useProjectCanDelete` now issues real `count: exact, head: true` queries against `time_entries`, `material_entries`, `voice_logs` in production. Returns `boolean | undefined` so the UI can render "Delete (checking…)" while the query is in flight instead of lying with `true`.
+- **[src/pages/ProjectDetail.tsx](src/pages/ProjectDetail.tsx) + [src/pages/Projects.tsx](src/pages/Projects.tsx)** — delete dropdown items handle the 3-state result: disabled with "(checking…)" when undefined, enabled "Delete permanently" when true, disabled "Delete (has entries)" when false. Admin no longer sees an enabled Delete that fails with an FK error toast.
+
+**QA — flake-proofing + missing unit coverage**
+- **[src/pages/WeekCalendar.tsx](src/pages/WeekCalendar.tsx)** — every day cell now carries a stable `data-testid` (`today-cell` for today, `day-cell-{iso}` otherwise). Specs no longer couple to Tailwind class strings.
+- **[src/pages/Reports.tsx](src/pages/Reports.tsx)** — `SummaryCell` emits `data-testid="summary-{label-kebab}"` on its value so payroll-integrity assertions can read the stat without DOM-walking.
+- **[e2e/smoke.spec.ts](e2e/smoke.spec.ts) + [e2e/manager-landing.spec.ts](e2e/manager-landing.spec.ts)** — old `[class*="ring-1 ring-ring"]` selector replaced with `getByTestId('today-cell')` in both.
+- **[src/lib/dates.test.ts](src/lib/dates.test.ts)** — new unit suite (12 tests): Monday-start week math for AU locale, year-boundary weeks (Dec 2025 → Jan 2026), Sunday + Friday + midweek inputs, week labels, `daysBetween` symmetry.
+- **[src/lib/csv.test.ts](src/lib/csv.test.ts)** — extended from 3 to 8 specs: O'Brien apostrophes pass through un-quoted, "paint, undercoat" gets quoted, embedded `\n` and `\r` are quoted intact, numeric values render unquoted.
+- **[e2e/payroll-csv.spec.ts](e2e/payroll-csv.spec.ts)** — new spec asserting (a) CSV header schema = `[date, worker, project, hours, rate, amount, notes]`, (b) row count > 0 and sum(hours) matches the on-screen Total hours stat to the tenth, (c) every row's `amount === hours × rate` to the cent, (d) manager has zero access to the Payroll CSV button.
+
+**Security — CI gate**
+- **[.github/workflows/ci.yml](.github/workflows/ci.yml)** — secret-scan regex extended to catch `sb_secret_*` and `sbp_*` prefixes (Supabase secret keys + access tokens). `sb_publishable_*` still allowed — those are anon keys, public-by-design.
+
+**Quality**
+- Unit: **46 / 46** green (up from 33).
+- E2E: **102 / 102** specs green across chromium + mobile-safari, no flake on repeat-each=2 of the new payroll-csv suite.
+- `npm run build` clean (224 KB gz).
+- Migration is forward-only, no data mutated; safe to apply against the live `tricoat-pm` Supabase project when Alex flips off demo mode.
+
+**Deferred to future sessions** (full list in dev-team-review-2.md)
+- `useAllTimeEntries` pagination/date-window (year-3 cliff).
+- RLS integration test matrix against Supabase Docker (mid-priority).
+- `save_voice_log_entries` `reason` parameter (voice unwired so low actual exposure).
+- Per-user rate limit on `parse-voice-log` edge function.
+- Xero/MYOB native payroll-CSV format (product roadmap, not engineering).
+
+---
+
 ## 2026-05-22 (later) — Real brand identity: indigo wordmark + Logo component
 
 Alex shared the actual Tricoat Painting & Decorating logo. Swapped from the generic platinum theme to the real visual identity.

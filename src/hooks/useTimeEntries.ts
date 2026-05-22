@@ -77,6 +77,30 @@ export function useCreateTimeEntry() {
   });
 }
 
+/**
+ * Insert multiple time entries atomically. Used by "Same as yesterday" so
+ * a mid-loop network drop can't leave half a day cloned. Single statement
+ * = single Postgres transaction.
+ */
+export function useBatchCreateTimeEntries() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (
+      rows: Array<Omit<TimeEntry, 'id' | 'created_at' | 'updated_at' | 'created_by'>>,
+    ) => {
+      if (rows.length === 0) return [];
+      if (env.demoMode) {
+        // Demo store is in-memory; per-row is already atomic-equivalent
+        return rows.map((r) => demoStore.createTimeEntry(r));
+      }
+      const { data, error } = await supabase.from('time_entries').insert(rows).select();
+      if (error) throw error;
+      return data as TimeEntry[];
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.timeEntries() }),
+  });
+}
+
 export function useUpdateTimeEntry() {
   const qc = useQueryClient();
   return useMutation({

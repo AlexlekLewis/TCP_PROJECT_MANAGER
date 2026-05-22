@@ -25,8 +25,13 @@ jobs:
       - name: Build
         run: npm run build
       - name: Secret scan
+        # Block Anthropic keys, full JWTs (service-role), Supabase secret keys
+        # (sb_secret_), Supabase access tokens (sbp_), and the explicit
+        # SUPABASE_SERVICE_ROLE_KEY env-var assignment. Publishable anon
+        # keys (sb_publishable_) are public by design and intentionally not
+        # blocked.
         run: |
-          ! git grep -nE 'sk-ant-[A-Za-z0-9_-]+|eyJ[A-Za-z0-9_-]{20,}|SUPABASE_SERVICE_ROLE_KEY=[^\s]+' -- ':(exclude).github' ':(exclude)docs' ':(exclude)package-lock.json'
+          ! git grep -nE 'sk-ant-[A-Za-z0-9_-]+|eyJ[A-Za-z0-9_-]{40,}|SUPABASE_SERVICE_ROLE_KEY=[^[:space:]]+|sb_secret_[A-Za-z0-9_-]+|sbp_[A-Fa-f0-9]{30,}' -- ':(exclude).github' ':(exclude)docs' ':(exclude)package-lock.json'
 
   e2e:
     runs-on: ubuntu-latest

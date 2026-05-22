@@ -213,11 +213,15 @@ function ProjectCard({
                   <DropdownMenuSeparator />
                   <DropdownMenuItem
                     destructive
-                    disabled={!canDelete}
-                    onSelect={canDelete ? onDelete : undefined}
+                    disabled={canDelete !== true}
+                    onSelect={canDelete === true ? onDelete : undefined}
                   >
                     <Trash2 className="h-4 w-4" />
-                    {canDelete ? 'Delete permanently' : 'Delete (has entries)'}
+                    {canDelete === undefined
+                      ? 'Delete (checking…)'
+                      : canDelete
+                        ? 'Delete permanently'
+                        : 'Delete (has entries)'}
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>

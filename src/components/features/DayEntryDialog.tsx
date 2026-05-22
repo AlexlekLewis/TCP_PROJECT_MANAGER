@@ -21,7 +21,7 @@ import {
 } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
 import type { Project, Worker } from '@/types/db';
-import { useCreateTimeEntry, useDeleteTimeEntry, useTimeEntriesForWeek } from '@/hooks/useTimeEntries';
+import { useBatchCreateTimeEntries, useCreateTimeEntry, useDeleteTimeEntry, useTimeEntriesForWeek } from '@/hooks/useTimeEntries';
 import { useCreateMaterialEntry, useMaterialEntries, useDeleteMaterialEntry } from '@/hooks/useMaterialEntries';
 import { formatCurrency } from '@/lib/currency';
 import { validateHours } from '@/lib/hours';
@@ -95,6 +95,7 @@ function DayEntryBody({
   const { data: weekEntries = [] } = useTimeEntriesForWeek(date);
   const { data: materialsAll = [] } = useMaterialEntries();
   const createTE = useCreateTimeEntry();
+  const batchCreateTE = useBatchCreateTimeEntries();
   const deleteTE = useDeleteTimeEntry();
   const createME = useCreateMaterialEntry();
   const deleteME = useDeleteMaterialEntry();
@@ -249,8 +250,10 @@ function DayEntryBody({
     setMatSupplier('');
   };
 
-  // One-tap clone yesterday's time entries into today. Skips entries whose
-  // worker is no longer active or whose project has been archived.
+  // One-tap clone yesterday's time entries into today. Atomic — uses a
+  // single batch insert so a mid-flight network drop can't leave half a
+  // day cloned. Skips entries whose worker is no longer active or whose
+  // project has been archived.
   const cloneYesterday = async () => {
     const validatedEntries = yesterdayTE.filter((e) => {
       const w = workerById.get(e.worker_id);
@@ -261,18 +264,24 @@ function DayEntryBody({
       toast.error('Nothing from yesterday to copy');
       return;
     }
-    for (const e of validatedEntries) {
-      await createTE.mutateAsync({
-        entry_date: date,
-        worker_id: e.worker_id,
-        project_id: e.project_id,
-        hours: Number(e.hours),
-        task: e.task,
-        notes: e.notes,
-        ai_source_id: null,
-      });
+    try {
+      await batchCreateTE.mutateAsync(
+        validatedEntries.map((e) => ({
+          entry_date: date,
+          worker_id: e.worker_id,
+          project_id: e.project_id,
+          hours: Number(e.hours),
+          task: e.task,
+          notes: e.notes,
+          ai_source_id: null,
+        })),
+      );
+      toast.success(
+        `Copied ${validatedEntries.length} entr${validatedEntries.length === 1 ? 'y' : 'ies'} from yesterday`,
+      );
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Copy from yesterday failed');
     }
-    toast.success(`Copied ${validatedEntries.length} entr${validatedEntries.length === 1 ? 'y' : 'ies'} from yesterday`);
   };
 
   const HOURS_PRESETS = [2, 4, 6, 7.6, 8, 10];

@@ -125,11 +125,15 @@ export default function ProjectDetailPage() {
                 <DropdownMenuSeparator />
                 <DropdownMenuItem
                   destructive
-                  disabled={!canDelete}
-                  onSelect={canDelete ? () => setPending('delete') : undefined}
+                  disabled={canDelete !== true}
+                  onSelect={canDelete === true ? () => setPending('delete') : undefined}
                 >
                   <Trash2 className="h-4 w-4" />
-                  {canDelete ? 'Delete permanently' : 'Delete (has entries)'}
+                  {canDelete === undefined
+                    ? 'Delete (checking…)'
+                    : canDelete
+                      ? 'Delete permanently'
+                      : 'Delete (has entries)'}
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>

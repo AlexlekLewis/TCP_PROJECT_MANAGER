@@ -94,8 +94,7 @@ test.describe('Day entry dialog ergonomics', () => {
     // doesn't appear when today is one of those. Pick a future day instead.
     await page.goto('/calendar');
     // Click the highlighted "today" cell first
-    const today = page.locator('[class*="ring-1 ring-ring"]').first();
-    await today.click();
+    await page.getByTestId('today-cell').click();
     // If the shortcut is visible (no entries today), trigger it; else
     // the test asserts nothing — but on a fresh demo today is Mon = has entries
     // so we navigate to Thursday (no entries seeded) instead.
