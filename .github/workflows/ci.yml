@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Lint
+        run: npm run lint
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Unit + integration tests
+        run: npm run test -- --run
+      - name: Build
+        run: npm run build
+      - name: Secret scan
+        run: |
+          ! git grep -nE 'sk-ant-[A-Za-z0-9_-]+|eyJ[A-Za-z0-9_-]{20,}|SUPABASE_SERVICE_ROLE_KEY=[^\s]+' -- ':(exclude).github' ':(exclude)docs' ':(exclude)package-lock.json'
+
+  e2e:
+    runs-on: ubuntu-latest
+    needs: build-and-test
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium webkit
+      - name: Create .env.local (demo mode)
+        run: echo "VITE_DEMO_MODE=true" > .env.local
+      - name: Run Playwright
+        run: npx playwright test
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 7
