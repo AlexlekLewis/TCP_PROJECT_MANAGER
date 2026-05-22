@@ -1,4 +1,4 @@
-import type { MaterialEntry, Project, TimeEntry, Worker } from '@/types/db';
+import type { MaterialEntry, Project, ProjectVariation, TimeEntry, Worker } from '@/types/db';
 
 // =============================================================================
 // Per-project totals (used on ProjectDetail + Reports breakdown)
@@ -12,7 +12,11 @@ export interface ProjectTotals {
   labourRevenue: number;
   materialCost: number;
   totalCost: number;
-  /** Profit vs quoted_price (legacy). null if not quoted. */
+  /** Σ (approved variation amounts) — extra scope client signed off. */
+  approvedVariations: number;
+  /** base quote + approvedVariations. null if no quote. */
+  totalQuote: number | null;
+  /** Profit vs totalQuote. null if not quoted. */
   profit: number | null;
   profitPercent: number | null;
   /**
@@ -36,6 +40,7 @@ export function computeProjectTotals(
   materialEntries: MaterialEntry[],
   workers: Worker[],
   overheadPercent = 0,
+  variations: ProjectVariation[] = [],
 ): ProjectTotals {
   const costRateById = new Map(workers.map((w) => [w.id, Number(w.cost_rate ?? 0)]));
   const chargeRateById = new Map(workers.map((w) => [w.id, Number(w.charge_out_rate ?? 0)]));
@@ -55,9 +60,17 @@ export function computeProjectTotals(
   const overhead = (labourCost + materialCost) * (overheadPercent / 100);
   const totalCost = labourCost + materialCost + overhead;
 
-  const quoted = project.quoted_price ?? null;
-  const profit = quoted != null ? quoted - totalCost : null;
-  const profitPercent = quoted != null && quoted > 0 ? (profit! / quoted) * 100 : null;
+  // Approved variations roll into the total quote — extra scope that's
+  // been signed off by the client gets added to what we'll bill.
+  const approvedVariations = variations
+    .filter((v) => v.project_id === project.id && v.status === 'approved')
+    .reduce((s, v) => s + Number(v.amount), 0);
+
+  const baseQuote = project.quoted_price ?? null;
+  const totalQuote = baseQuote != null ? baseQuote + approvedVariations : null;
+  const profit = totalQuote != null ? totalQuote - totalCost : null;
+  const profitPercent =
+    totalQuote != null && totalQuote > 0 ? (profit! / totalQuote) * 100 : null;
 
   // Projected profit = revenue we'd bill on hours-so-far minus our actual
   // cost (labour + materials). When target_profit is set, we bucket
@@ -88,6 +101,8 @@ export function computeProjectTotals(
     labourRevenue: round2(labourRevenue),
     materialCost: round2(materialCost),
     totalCost: round2(totalCost),
+    approvedVariations: round2(approvedVariations),
+    totalQuote: totalQuote != null ? round2(totalQuote) : null,
     profit: profit != null ? round2(profit) : null,
     profitPercent: profitPercent != null ? round2(profitPercent) : null,
     projectedProfit: round2(projectedProfit),

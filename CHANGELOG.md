@@ -6,6 +6,44 @@ Format: one section per session, newest on top. Each entry: what changed, why, f
 
 ---
 
+## 2026-05-22 (job-type + variations + manager drafts + owner-economics labelling)
+
+Alex's batch of asks: (Q1) clarify owner-income model on the admin P&L, (Q2) handle jobs with no fixed quote, (Q3) add scope variations on top of a quote, (Q4) let Gavin create draft projects so he's never blocked on logging hours. Chose **Model C — Floor + bonus** for owner economics.
+
+**Owner-income labelling — Model C** ([src/pages/Admin.tsx](src/pages/Admin.tsx))
+- Math unchanged. Re-labelled the weekly P&L cards so the meaning is explicit:
+  - "Crew + your draw" (replaces ambiguous "Labour cost") — sub: `$X crew hourly + $Y fixed weekly`
+  - "Profit above your draw" (replaces ambiguous "Profit") — sub explicitly says "Bonus on top of your $1,250 floor" / "Business isn't covering your draw this week" / "Breakeven"
+- New "Owner economics" summary card below the 4 KPIs: `Your guaranteed draw $1,250 · + profit above draw $X · = Owner total if you take the bonus $Y`. Pulls the $1,250 from the Alex worker row's `weekly_wage`.
+
+**Job type — Q2** ([supabase/migrations/20260522000007_job_type_variations_and_manager_drafts.sql](supabase/migrations/20260522000007_job_type_variations_and_manager_drafts.sql) + ProjectForm)
+- `projects.quote_type text` enum: `fixed_quote` (default) or `time_and_materials`. CHECK constraint enforces values.
+- ProjectForm: admin sees a "Job type" select. When T&M, the quote/budget triple collapses to just an optional "quoted hours" estimate with a caption explaining "revenue is hours × charge-out rate".
+- `projects_visible` view refreshed to expose the new column to manager (operational, no $ leak).
+
+**Project variations — Q3** ([src/components/features/VariationsSection.tsx](src/components/features/VariationsSection.tsx) + hook + aggregations)
+- New `project_variations` table: id, project_id (FK on delete cascade), description, amount (CHECK <> 0), status (pending/approved/rejected), notes, created_at/by, approved_at/by.
+- RLS: `project_variations_admin_all` — admin only across SELECT/INSERT/UPDATE/DELETE. Manager has no read access (variations are pure financial data — extra scope conversations happen between Alex and the client).
+- New hooks in [src/hooks/useProjectVariations.ts](src/hooks/useProjectVariations.ts): `useProjectVariations` / `useCreateVariation` / `useUpdateVariationStatus`. Manager queries gracefully return `[]` on RLS deny.
+- `computeProjectTotals` now accepts `variations: ProjectVariation[]` (default `[]`) and emits `approvedVariations` + `totalQuote` (base + Σ approved). Profit math uses `totalQuote`.
+- ProjectDetail: new "Variations" section above the progress bars (admin only). Add button opens a dialog (description / $ amount / notes / "approved already?" toggle). Pending rows have inline Approve / Reject buttons. Approved variations show a `+$X approved` badge in the section header. The "Quoted" stat card on the financials row now reads "Quoted (incl. variations)" with a sub-line showing base + variations breakdown when applicable.
+
+**Manager-created draft projects — Q4**
+- New column `projects.needs_admin_review boolean default false`.
+- New RLS policy `projects_manager_draft_insert`: manager can INSERT a project only with `needs_admin_review = true` AND `quoted_price`/`materials_budget`/`target_profit` all `null`. UPDATE/DELETE remain admin-only — once it's in the DB, only Alex can touch the financial fields.
+- ProjectForm: when role=manager and creating new, the form strips out admin-only fields entirely (job type, $ fields, daily-cap, date range, color tag, status). Replaces them with a friendly amber callout: "Just the basics — Alex will review this and fill in the quote, budget, and target profit before payroll runs." Submit button reads "Save draft for review".
+- ProjectForm in admin mode now shows an inline "Mark as reviewed" checkbox at the bottom of the edit form when the project's needs_admin_review is true.
+- Projects page: "New project" button now visible to manager (labelled "New draft"). Project cards show a yellow "review" badge for admin when needs_admin_review is true.
+- ProjectDetail: amber banner across the top for admin when `needs_admin_review` is true, with "Open edit form" + "Mark reviewed" buttons.
+
+**Tests** ([src/lib/aggregations.test.ts](src/lib/aggregations.test.ts))
+- 2 new specs for variations: "only approved variations matching project_id add to the quote" + "profit math uses total quote (base + variations)".
+- Existing tests updated with `quote_type` + `needs_admin_review` on the fixture project.
+
+**Quality** — 54/54 vitest, 102/102 Playwright, typecheck + build clean (229 KB gz).
+
+---
+
 ## 2026-05-22 (view-as) — Admin "View as Gavin" preview toggle + return banner
 
 Alex's ask: from his admin login, be able to flip into Gavin's manager view and back, so he can sanity-check what Gavin actually sees. Shipped as a UI-only preview (no real auth swap — explicit caveat below).

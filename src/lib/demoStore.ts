@@ -14,7 +14,9 @@ import {
 import type {
   MaterialEntry,
   Project,
+  ProjectVariation,
   TimeEntry,
+  VariationStatus,
   VoiceLog,
   WeekLock,
   Worker,
@@ -29,6 +31,7 @@ class DemoStore {
   materialEntries: MaterialEntry[] = [...DEMO_MATERIAL_ENTRIES];
   voiceLogs: VoiceLog[] = [...DEMO_VOICE_LOGS];
   weekLocks: WeekLock[] = [...DEMO_WEEK_LOCKS];
+  variations: ProjectVariation[] = [];
 
   private listeners = new Set<Listener>();
 
@@ -148,6 +151,36 @@ class DemoStore {
   }
   isWeekLocked(date: string) {
     return this.weekLocks.some((l) => date >= l.week_start && date <= addDaysISO(l.week_start, 6));
+  }
+
+  // --- Variations --------------------------------------------------------
+  createVariation(
+    v: Omit<ProjectVariation, 'id' | 'created_at' | 'created_by' | 'approved_at' | 'approved_by'>,
+  ) {
+    const row: ProjectVariation = {
+      ...v,
+      id: this.genId('var-'),
+      created_by: DEMO_USER_ID,
+      created_at: this.now(),
+      approved_at: null,
+      approved_by: null,
+    };
+    this.variations = [row, ...this.variations];
+    this.notify();
+    return row;
+  }
+  updateVariationStatus(id: string, status: VariationStatus) {
+    this.variations = this.variations.map((v) =>
+      v.id === id
+        ? {
+            ...v,
+            status,
+            approved_at: status === 'approved' ? this.now() : null,
+            approved_by: status === 'approved' ? DEMO_USER_ID : null,
+          }
+        : v,
+    );
+    this.notify();
   }
 
   // --- Voice logs --------------------------------------------------------

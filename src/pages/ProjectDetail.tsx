@@ -36,7 +36,14 @@ import {
 import { useWorkers } from '@/hooks/useWorkers';
 import { useTimeEntriesForProject } from '@/hooks/useTimeEntries';
 import { useMaterialEntriesForProject } from '@/hooks/useMaterialEntries';
+import {
+  useCreateVariation,
+  useProjectVariations,
+  useUpdateVariationStatus,
+} from '@/hooks/useProjectVariations';
+import { useUpdateProject } from '@/hooks/useProjects';
 import { computeProjectTotals } from '@/lib/aggregations';
+import { VariationsSection } from '@/components/features/VariationsSection';
 import { formatCurrency } from '@/lib/currency';
 import { formatHours } from '@/lib/hours';
 import { useAuth } from '@/context/AuthContext';
@@ -54,19 +61,36 @@ export default function ProjectDetailPage() {
   const { data: workers = [] } = useWorkers();
   const { data: timeEntries = [] } = useTimeEntriesForProject(id ?? '');
   const { data: materials = [] } = useMaterialEntriesForProject(id ?? '');
+  const { data: variations = [] } = useProjectVariations(id ?? null);
   const canDelete = useProjectCanDelete(id);
   const archive = useArchiveProject();
   const del = useDeleteProject();
+  const updateProject = useUpdateProject();
+  const createVariation = useCreateVariation();
+  const updateVariationStatus = useUpdateVariationStatus();
   const working = archive.isPending || del.isPending;
 
   const workerById = useMemo(() => new Map(workers.map((w) => [w.id, w])), [workers]);
   const totals = useMemo(
     () =>
       project
-        ? computeProjectTotals(project, timeEntries, materials, workers)
+        ? computeProjectTotals(project, timeEntries, materials, workers, 0, variations)
         : null,
-    [project, timeEntries, materials, workers],
+    [project, timeEntries, materials, workers, variations],
   );
+
+  const markReviewed = async () => {
+    if (!project) return;
+    try {
+      await updateProject.mutateAsync({
+        id: project.id,
+        patch: { needs_admin_review: false },
+      });
+      toast.success('Project marked as reviewed');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed');
+    }
+  };
 
   if (!project) {
     return (
@@ -85,6 +109,38 @@ export default function ProjectDetailPage() {
         className="-mx-4 h-1.5 rounded-full"
         style={{ background: project.color_tag ?? 'hsl(var(--border))' }}
       />
+
+      {/* Needs-review banner — surfaced to admin when a manager-created draft is awaiting completion. */}
+      {project.needs_admin_review && role === 'admin' && (
+        <div
+          data-testid="needs-review-banner"
+          className="flex items-start gap-3 rounded-md border border-amber-300/50 bg-amber-50 px-3 py-3 text-sm text-amber-900 dark:border-amber-700/40 dark:bg-amber-950/60 dark:text-amber-100"
+        >
+          <Pencil className="mt-0.5 h-4 w-4 shrink-0" />
+          <div className="flex-1 space-y-0.5">
+            <p className="font-semibold">Draft project — needs your review</p>
+            <p className="text-xs">
+              Gavin created this project so he could log hours. Fill in the quote, materials budget, and target profit, then mark it reviewed.
+            </p>
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            className="border-amber-400 bg-amber-50 text-amber-900 hover:bg-amber-100 dark:border-amber-700 dark:bg-amber-900 dark:text-amber-100"
+            onClick={() => setEditOpen(true)}
+          >
+            Open edit form
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="text-amber-900 hover:bg-amber-100 dark:text-amber-100 dark:hover:bg-amber-900"
+            onClick={markReviewed}
+          >
+            Mark reviewed
+          </Button>
+        </div>
+      )}
       <div className="flex flex-wrap items-center gap-2">
         <Button variant="ghost" size="icon" asChild>
           <Link to="/projects" aria-label="Back">
@@ -163,8 +219,16 @@ export default function ProjectDetailPage() {
             icon={<DollarSign className="h-4 w-4" />}
           />
           <StatCard
-            label="Quoted"
-            value={formatCurrency(project.quoted_price, { whole: true })}
+            label={totals.approvedVariations > 0 ? 'Quoted (incl. variations)' : 'Quoted'}
+            value={formatCurrency(totals.totalQuote ?? project.quoted_price, { whole: true })}
+            sub={
+              totals.approvedVariations > 0
+                ? `${formatCurrency(project.quoted_price, { whole: true })} base + ${formatCurrency(
+                    totals.approvedVariations,
+                    { whole: true },
+                  )} variations`
+                : undefined
+            }
             icon={<DollarSign className="h-4 w-4" />}
           />
           <StatCard
@@ -220,6 +284,23 @@ export default function ProjectDetailPage() {
             icon={<TrendingUp className="h-4 w-4" />}
           />
         </section>
+      )}
+
+      {/* Variations (admin only). Approved variations roll into total quote + margin. */}
+      {role === 'admin' && (
+        <VariationsSection
+          projectId={project.id}
+          variations={variations}
+          onAdd={async (input) => {
+            await createVariation.mutateAsync({ project_id: project.id, ...input });
+            toast.success('Variation added');
+          }}
+          onSetStatus={async (id, status) => {
+            await updateVariationStatus.mutateAsync({ id, status });
+            toast.success(`Variation ${status}`);
+          }}
+          approvedTotal={totals?.approvedVariations ?? 0}
+        />
       )}
 
       {/* Progress bars */}

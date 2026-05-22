@@ -9,6 +9,13 @@ export type ISODateTime = string;
 export type Role = 'admin' | 'manager';
 export type ProjectStatus = 'active' | 'complete' | 'archived';
 export type EntryStatus = 'pending' | 'in_progress' | 'complete';
+/**
+ * `fixed_quote` — the classic painter-quote: agreed $ total, profit-vs-quote
+ * applies. `time_and_materials` — no fixed quote, bill at charge-out rate;
+ * the gross-margin card is omitted in favour of projected-profit.
+ */
+export type QuoteType = 'fixed_quote' | 'time_and_materials';
+export type VariationStatus = 'pending' | 'approved' | 'rejected';
 
 export interface Profile {
   id: UUID;
@@ -59,6 +66,14 @@ export interface Project {
    * managers see null. Used to compute profit health on the detail page.
    */
   target_profit: number | null;
+  /** Fixed-quote vs time & materials. Determines which UI fields show. */
+  quote_type: QuoteType;
+  /**
+   * Manager-created drafts land with this `true`. The admin Projects
+   * list highlights them and the project detail shows a "review and
+   * complete the quote" banner. Cleared via "Mark reviewed".
+   */
+  needs_admin_review: boolean;
   status: ProjectStatus;
   color_tag: string | null;
   start_date: ISODate | null;
@@ -121,6 +136,24 @@ export interface AuditLogRow {
   before: unknown;
   after: unknown;
   reason: string | null;
+}
+
+/**
+ * Variation = scope added to a project mid-job (client asked for X on top of
+ * the quote). Only `approved` variations roll into the project total quote.
+ * Admin-only at the DB layer.
+ */
+export interface ProjectVariation {
+  id: UUID;
+  project_id: UUID;
+  description: string;
+  amount: number;
+  status: VariationStatus;
+  notes: string | null;
+  created_at: ISODateTime;
+  created_by: UUID;
+  approved_at: ISODateTime | null;
+  approved_by: UUID | null;
 }
 
 export interface Settings {

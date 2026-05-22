@@ -87,11 +87,9 @@ export default function ProjectsPage() {
             <SelectItem value="all">All</SelectItem>
           </SelectContent>
         </Select>
-        {isAdmin && (
-          <Button onClick={() => setNewOpen(true)}>
-            <Plus className="h-4 w-4" /> New project
-          </Button>
-        )}
+        <Button onClick={() => setNewOpen(true)}>
+          <Plus className="h-4 w-4" /> {isAdmin ? 'New project' : 'New draft'}
+        </Button>
       </div>
 
       {filtered.length === 0 ? (
@@ -184,6 +182,15 @@ function ProjectCard({
         <div className="flex items-start justify-between gap-2">
           <CardTitle className="truncate text-base">{p.name}</CardTitle>
           <div className="flex shrink-0 items-center gap-1">
+            {p.needs_admin_review && isAdmin && (
+              <Badge
+                variant="default"
+                className="border-amber-400 bg-amber-100 text-amber-900 hover:bg-amber-100 dark:border-amber-700 dark:bg-amber-900 dark:text-amber-100"
+                title="Manager-created draft awaiting admin review"
+              >
+                review
+              </Badge>
+            )}
             <Badge variant={statusVariant(p.status)}>{p.status}</Badge>
             {isAdmin && (
               <DropdownMenu>

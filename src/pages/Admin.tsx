@@ -66,22 +66,68 @@ export default function AdminPage() {
         </div>
 
         <div className="grid gap-3 md:grid-cols-4">
-          <PnLCell label="Revenue" value={formatCurrency(pnl.revenue, { whole: true })}
-            sub={`${formatHours(workerRows.reduce((s, r) => s + r.totalHours, 0))} billed`} />
           <PnLCell
-            label="Labour cost"
+            label="Revenue"
+            value={formatCurrency(pnl.revenue, { whole: true })}
+            sub={`${formatHours(workerRows.reduce((s, r) => s + r.totalHours, 0))} billed @ charge-out`}
+          />
+          <PnLCell
+            label="Crew + your draw"
             value={formatCurrency(pnl.totalLabourCost, { whole: true })}
-            sub={`${formatCurrency(pnl.hourlyLabourCost, { whole: true })} hourly + ${formatCurrency(pnl.fixedWeeklyWages, { whole: true })} fixed`}
+            sub={`${formatCurrency(pnl.hourlyLabourCost, { whole: true })} crew hourly + ${formatCurrency(pnl.fixedWeeklyWages, { whole: true })} fixed weekly`}
           />
           <PnLCell label="Materials" value={formatCurrency(pnl.materialCost, { whole: true })} />
           <PnLCell
-            label="Profit"
+            label="Profit above your draw"
             value={formatCurrency(pnl.profit, { whole: true })}
-            sub={pnl.marginPercent != null ? `${pnl.marginPercent.toFixed(0)}% margin` : undefined}
+            sub={
+              pnl.profit > 0
+                ? `Bonus on top of your $1,250 floor (${pnl.marginPercent?.toFixed(0)}% margin)`
+                : pnl.profit < 0
+                  ? "Business isn't covering your draw this week"
+                  : 'Breakeven — covering your draw exactly'
+            }
             tone={pnl.profit < 0 ? 'danger' : pnl.profit > 0 ? 'success' : 'muted'}
             icon={pnl.profit < 0 ? <TrendingDown className="h-4 w-4" /> : <TrendingUp className="h-4 w-4" />}
           />
         </div>
+
+        {/* Owner-economics summary (Model C: floor + bonus) */}
+        <Card className="mt-3">
+          <CardContent className="flex flex-wrap items-baseline gap-x-6 gap-y-1 px-4 py-3 text-sm">
+            <div>
+              <span className="text-xs uppercase tracking-wide text-muted-foreground">Your guaranteed draw </span>
+              <span className="font-semibold tabular-nums">
+                {formatCurrency(
+                  workers.find((w) => w.name === 'Alex')?.weekly_wage ?? 1250,
+                  { whole: true },
+                )}
+              </span>
+            </div>
+            <div>
+              <span className="text-xs uppercase tracking-wide text-muted-foreground">+ profit above draw </span>
+              <span
+                className={cn(
+                  'font-semibold tabular-nums',
+                  pnl.profit < 0 && 'text-destructive',
+                  pnl.profit > 0 && 'text-emerald-600 dark:text-emerald-400',
+                )}
+              >
+                {formatCurrency(Math.max(0, pnl.profit), { whole: true })}
+              </span>
+            </div>
+            <div className="ml-auto">
+              <span className="text-xs uppercase tracking-wide text-muted-foreground">Owner total if you take the bonus </span>
+              <span className="text-lg font-semibold tabular-nums">
+                {formatCurrency(
+                  (workers.find((w) => w.name === 'Alex')?.weekly_wage ?? 1250) +
+                    Math.max(0, pnl.profit),
+                  { whole: true },
+                )}
+              </span>
+            </div>
+          </CardContent>
+        </Card>
 
         {/* Per-worker contribution */}
         <Card className="mt-3">

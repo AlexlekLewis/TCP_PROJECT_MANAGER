@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { computeProjectTotals, computeWeeklyPnL, computeWorkerWeek } from './aggregations';
-import type { MaterialEntry, Project, TimeEntry, Worker } from '@/types/db';
+import type { MaterialEntry, Project, ProjectVariation, TimeEntry, Worker } from '@/types/db';
 
 const now = '2026-04-21T00:00:00Z';
 
@@ -24,6 +24,8 @@ const project: Project = {
   materials_budget: 2000,
   daily_hours_warning: null,
   target_profit: 3000,
+  quote_type: 'fixed_quote',
+  needs_admin_review: false,
   status: 'active',
   color_tag: null,
   start_date: null,
@@ -85,6 +87,29 @@ describe('computeProjectTotals — cost + revenue + profit health', () => {
     const t = computeProjectTotals(project, te, me, workers);
     // quote 10000 − labour 700 − materials 500 = 8800
     expect(t.profit).toBe(8800);
+    expect(t.totalQuote).toBe(10000);
+    expect(t.approvedVariations).toBe(0);
+  });
+});
+
+describe('computeProjectTotals — variations roll into total quote', () => {
+  const variations: ProjectVariation[] = [
+    { id: 'v1', project_id: 'p1', description: 'Extra bathroom', amount: 1500, status: 'approved',  notes: null, created_at: now, created_by: 'u', approved_at: now, approved_by: 'u' },
+    { id: 'v2', project_id: 'p1', description: 'Pending request',  amount: 500,  status: 'pending',   notes: null, created_at: now, created_by: 'u', approved_at: null, approved_by: null },
+    { id: 'v3', project_id: 'p1', description: 'Rejected change',  amount: 800,  status: 'rejected',  notes: null, created_at: now, created_by: 'u', approved_at: null, approved_by: null },
+    { id: 'v4', project_id: 'other-project', description: 'Wrong project', amount: 9999, status: 'approved', notes: null, created_at: now, created_by: 'u', approved_at: now, approved_by: 'u' },
+  ];
+
+  it('only approved variations matching project_id add to the quote', () => {
+    const t = computeProjectTotals(project, te, me, workers, 0, variations);
+    expect(t.approvedVariations).toBe(1500);
+    expect(t.totalQuote).toBe(11500); // base 10000 + 1500 approved
+  });
+
+  it('profit math uses total quote (base + variations)', () => {
+    const t = computeProjectTotals(project, te, me, workers, 0, variations);
+    // 11500 − 700 − 500 = 10300
+    expect(t.profit).toBe(10300);
   });
 });
 

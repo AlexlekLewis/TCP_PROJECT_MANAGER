@@ -19,7 +19,8 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { useCreateProject, useUpdateProject } from '@/hooks/useProjects';
-import type { Project, ProjectStatus } from '@/types/db';
+import { useAuth } from '@/context/AuthContext';
+import type { Project, ProjectStatus, QuoteType } from '@/types/db';
 
 interface Props {
   open: boolean;
@@ -39,9 +40,11 @@ const COLOR_PRESETS = [
 
 export function ProjectForm({ open, onClose, project }: Props) {
   const isEdit = !!project;
+  const { role } = useAuth();
+  const isAdmin = role === 'admin';
   const create = useCreateProject();
   const update = useUpdateProject();
-  const [form, setForm] = useState<Partial<Project>>(() => project ?? defaultForm());
+  const [form, setForm] = useState<Partial<Project>>(() => project ?? defaultForm(isAdmin));
 
   const submit = async () => {
     if (!form.name) {
@@ -53,22 +56,44 @@ export function ProjectForm({ open, onClose, project }: Props) {
         await update.mutateAsync({ id: project!.id, patch: form });
         toast.success('Project updated');
       } else {
-        await create.mutateAsync(form as Omit<Project, 'id' | 'created_at' | 'updated_at'>);
-        toast.success('Project created');
+        // Manager-created projects are always drafts requiring admin review.
+        const payload = isAdmin
+          ? form
+          : { ...form, needs_admin_review: true, quote_type: 'fixed_quote' as QuoteType };
+        await create.mutateAsync(
+          payload as Omit<Project, 'id' | 'created_at' | 'updated_at'>,
+        );
+        toast.success(
+          isAdmin
+            ? 'Project created'
+            : 'Draft saved — Alex will review and add the quote details',
+        );
       }
       onClose();
-      setForm(defaultForm());
+      setForm(defaultForm(isAdmin));
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Save failed');
     }
   };
 
+  const quoteType = (form.quote_type ?? 'fixed_quote') as QuoteType;
+  const showQuoteFields = isAdmin && quoteType === 'fixed_quote';
+
   return (
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
       <DialogContent className="max-w-xl">
         <DialogHeader>
-          <DialogTitle>{isEdit ? 'Edit project' : 'New project'}</DialogTitle>
+          <DialogTitle>
+            {isEdit ? 'Edit project' : isAdmin ? 'New project' : 'New project (draft)'}
+          </DialogTitle>
         </DialogHeader>
+
+        {!isAdmin && !isEdit && (
+          <div className="rounded-md border border-amber-300/50 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-700/40 dark:bg-amber-950/60 dark:text-amber-100">
+            Just the basics — Alex will review this and fill in the quote, budget, and target profit before payroll runs.
+          </div>
+        )}
+
         <div className="grid gap-4">
           <div className="space-y-1.5">
             <Label>Name *</Label>
@@ -86,22 +111,24 @@ export function ProjectForm({ open, onClose, project }: Props) {
                 onChange={(e) => setForm({ ...form, client_name: e.target.value })}
               />
             </div>
-            <div className="space-y-1.5">
-              <Label>Status</Label>
-              <Select
-                value={form.status ?? 'active'}
-                onValueChange={(v) => setForm({ ...form, status: v as ProjectStatus })}
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="active">Active</SelectItem>
-                  <SelectItem value="complete">Complete</SelectItem>
-                  <SelectItem value="archived">Archived</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
+            {isAdmin && (
+              <div className="space-y-1.5">
+                <Label>Status</Label>
+                <Select
+                  value={form.status ?? 'active'}
+                  onValueChange={(v) => setForm({ ...form, status: v as ProjectStatus })}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="active">Active</SelectItem>
+                    <SelectItem value="complete">Complete</SelectItem>
+                    <SelectItem value="archived">Archived</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
           </div>
           <div className="space-y-1.5">
             <Label>Address</Label>
@@ -110,20 +137,69 @@ export function ProjectForm({ open, onClose, project }: Props) {
               onChange={(e) => setForm({ ...form, address: e.target.value })}
             />
           </div>
-          <div className="grid gap-4 md:grid-cols-3">
+
+          {isAdmin && (
             <div className="space-y-1.5">
-              <Label>Quote $</Label>
-              <Input
-                type="number"
-                step="100"
-                value={form.quoted_price ?? ''}
-                onChange={(e) =>
-                  setForm({ ...form, quoted_price: e.target.value ? +e.target.value : null })
-                }
-              />
+              <Label>Job type</Label>
+              <Select
+                value={quoteType}
+                onValueChange={(v) => setForm({ ...form, quote_type: v as QuoteType })}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="fixed_quote">Fixed quote</SelectItem>
+                  <SelectItem value="time_and_materials">Time &amp; materials</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                Fixed quote uses the dollar fields below for margin tracking. Time &amp; materials bills hours × charge-out, no fixed total.
+              </p>
             </div>
+          )}
+
+          {showQuoteFields && (
+            <div className="grid gap-4 md:grid-cols-3">
+              <div className="space-y-1.5">
+                <Label>Quote $</Label>
+                <Input
+                  type="number"
+                  step="100"
+                  value={form.quoted_price ?? ''}
+                  onChange={(e) =>
+                    setForm({ ...form, quoted_price: e.target.value ? +e.target.value : null })
+                  }
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Quoted hours</Label>
+                <Input
+                  type="number"
+                  step="1"
+                  value={form.quoted_hours ?? ''}
+                  onChange={(e) =>
+                    setForm({ ...form, quoted_hours: e.target.value ? +e.target.value : null })
+                  }
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Materials budget $</Label>
+                <Input
+                  type="number"
+                  step="50"
+                  value={form.materials_budget ?? ''}
+                  onChange={(e) =>
+                    setForm({ ...form, materials_budget: e.target.value ? +e.target.value : null })
+                  }
+                />
+              </div>
+            </div>
+          )}
+
+          {isAdmin && quoteType === 'time_and_materials' && (
             <div className="space-y-1.5">
-              <Label>Quoted hours</Label>
+              <Label>Quoted hours (optional estimate)</Label>
               <Input
                 type="number"
                 step="1"
@@ -132,95 +208,114 @@ export function ProjectForm({ open, onClose, project }: Props) {
                   setForm({ ...form, quoted_hours: e.target.value ? +e.target.value : null })
                 }
               />
+              <p className="text-xs text-muted-foreground">
+                No fixed quote on T&amp;M jobs — revenue is hours billed × charge-out rate. Quoted hours is just a rough scope estimate so the Hours-used % gauge has something to compare against.
+              </p>
             </div>
+          )}
+
+          {isAdmin && (
             <div className="space-y-1.5">
-              <Label>Materials budget $</Label>
+              <Label>Target profit $ (optional)</Label>
               <Input
                 type="number"
-                step="50"
-                value={form.materials_budget ?? ''}
+                step="100"
+                min="0"
+                placeholder="What you expect to clear on this job after all costs"
+                value={form.target_profit ?? ''}
                 onChange={(e) =>
-                  setForm({ ...form, materials_budget: e.target.value ? +e.target.value : null })
+                  setForm({ ...form, target_profit: e.target.value ? +e.target.value : null })
                 }
               />
+              <p className="text-xs text-muted-foreground">
+                Used on the project detail page to show on-track / at-risk / over-budget as the job progresses.
+              </p>
             </div>
-          </div>
-          <div className="space-y-1.5">
-            <Label>Target profit $ (optional)</Label>
-            <Input
-              type="number"
-              step="100"
-              min="0"
-              placeholder="What you expect to clear on this job after all costs"
-              value={form.target_profit ?? ''}
-              onChange={(e) =>
-                setForm({ ...form, target_profit: e.target.value ? +e.target.value : null })
-              }
-            />
-            <p className="text-xs text-muted-foreground">
-              Used on the project detail page to show on-track / at-risk / over-budget as the job progresses.
-            </p>
-          </div>
-          <div className="space-y-1.5">
-            <Label>Daily hours warning per worker (optional)</Label>
-            <Input
-              type="number"
-              step="0.5"
-              min="0"
-              max="14"
-              placeholder="e.g. 8 — flag if a worker logs over this on this job in a day"
-              value={form.daily_hours_warning ?? ''}
-              onChange={(e) =>
-                setForm({
-                  ...form,
-                  daily_hours_warning: e.target.value ? +e.target.value : null,
-                })
-              }
-            />
-            <p className="text-xs text-muted-foreground">
-              Soft cap — the day-entry screen shows a flag when exceeded, but the save still goes through.
-            </p>
-          </div>
-          <div className="grid gap-4 md:grid-cols-2">
+          )}
+
+          {isAdmin && (
             <div className="space-y-1.5">
-              <Label>Start date</Label>
+              <Label>Daily hours warning per worker (optional)</Label>
               <Input
-                type="date"
-                value={form.start_date ?? ''}
-                onChange={(e) => setForm({ ...form, start_date: e.target.value || null })}
+                type="number"
+                step="0.5"
+                min="0"
+                max="14"
+                placeholder="e.g. 8 — flag if a worker logs over this on this job in a day"
+                value={form.daily_hours_warning ?? ''}
+                onChange={(e) =>
+                  setForm({
+                    ...form,
+                    daily_hours_warning: e.target.value ? +e.target.value : null,
+                  })
+                }
               />
+              <p className="text-xs text-muted-foreground">
+                Soft cap — the day-entry screen shows a flag when exceeded, but the save still goes through.
+              </p>
             </div>
+          )}
+
+          {isAdmin && (
+            <div className="grid gap-4 md:grid-cols-2">
+              <div className="space-y-1.5">
+                <Label>Start date</Label>
+                <Input
+                  type="date"
+                  value={form.start_date ?? ''}
+                  onChange={(e) => setForm({ ...form, start_date: e.target.value || null })}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Expected end</Label>
+                <Input
+                  type="date"
+                  value={form.end_date ?? ''}
+                  onChange={(e) => setForm({ ...form, end_date: e.target.value || null })}
+                />
+              </div>
+            </div>
+          )}
+
+          {isAdmin && (
             <div className="space-y-1.5">
-              <Label>Expected end</Label>
-              <Input
-                type="date"
-                value={form.end_date ?? ''}
-                onChange={(e) => setForm({ ...form, end_date: e.target.value || null })}
-              />
+              <Label>Color tag</Label>
+              <div className="flex flex-wrap gap-2">
+                {COLOR_PRESETS.map((c) => (
+                  <button
+                    key={c.value}
+                    type="button"
+                    onClick={() => setForm({ ...form, color_tag: c.value })}
+                    className={
+                      'flex items-center gap-2 rounded-md border px-2 py-1 text-xs ' +
+                      (form.color_tag === c.value ? 'ring-2 ring-ring' : '')
+                    }
+                  >
+                    <span
+                      className="h-3 w-3 rounded-full"
+                      style={{ background: c.value }}
+                    />
+                    {c.label}
+                  </button>
+                ))}
+              </div>
             </div>
-          </div>
-          <div className="space-y-1.5">
-            <Label>Color tag</Label>
-            <div className="flex flex-wrap gap-2">
-              {COLOR_PRESETS.map((c) => (
-                <button
-                  key={c.value}
-                  type="button"
-                  onClick={() => setForm({ ...form, color_tag: c.value })}
-                  className={
-                    'flex items-center gap-2 rounded-md border px-2 py-1 text-xs ' +
-                    (form.color_tag === c.value ? 'ring-2 ring-ring' : '')
-                  }
-                >
-                  <span
-                    className="h-3 w-3 rounded-full"
-                    style={{ background: c.value }}
-                  />
-                  {c.label}
-                </button>
-              ))}
+          )}
+
+          {isAdmin && isEdit && project?.needs_admin_review && (
+            <div className="rounded-md border border-amber-300/50 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-700/40 dark:bg-amber-950/60 dark:text-amber-100">
+              <strong>Draft awaiting review.</strong> Tick the box below to mark this project complete (quote + budget filled in, ready for payroll).
+              <label className="mt-2 flex items-center gap-2 text-sm font-normal">
+                <input
+                  type="checkbox"
+                  checked={form.needs_admin_review === false}
+                  onChange={(e) => setForm({ ...form, needs_admin_review: !e.target.checked })}
+                />
+                Mark as reviewed
+              </label>
             </div>
-          </div>
+          )}
+
           <div className="space-y-1.5">
             <Label>Notes</Label>
             <Textarea
@@ -234,14 +329,16 @@ export function ProjectForm({ open, onClose, project }: Props) {
           <Button variant="ghost" onClick={onClose}>
             Cancel
           </Button>
-          <Button onClick={submit}>{isEdit ? 'Save' : 'Create project'}</Button>
+          <Button onClick={submit}>
+            {isEdit ? 'Save' : isAdmin ? 'Create project' : 'Save draft for review'}
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
   );
 }
 
-function defaultForm(): Partial<Project> {
+function defaultForm(isAdmin: boolean): Partial<Project> {
   return {
     name: '',
     client_name: null,
@@ -250,6 +347,8 @@ function defaultForm(): Partial<Project> {
     quoted_hours: null,
     materials_budget: null,
     target_profit: null,
+    quote_type: 'fixed_quote',
+    needs_admin_review: !isAdmin,
     daily_hours_warning: null,
     status: 'active',
     color_tag: '#a8a8b0',
