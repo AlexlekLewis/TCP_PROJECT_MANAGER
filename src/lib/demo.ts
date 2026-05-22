@@ -26,10 +26,11 @@ export const DEMO_PROFILES: Profile[] = [
 ];
 
 export const DEMO_WORKERS: Worker[] = [
-  { id: 'w-jerry', name: 'Jerry', hourly_rate: 0, active: true, created_at: iso(today) },
-  { id: 'w-pierce', name: 'Pierce', hourly_rate: 0, active: true, created_at: iso(today) },
-  { id: 'w-gavin', name: 'Gavin', hourly_rate: 0, active: true, created_at: iso(today) },
-  { id: 'w-alex', name: 'Alex', hourly_rate: 0, active: true, created_at: iso(today) },
+  // Values match the live tricoat-pm seed (2026-05-22).
+  { id: 'w-jerry',  name: 'Jerry',  cost_rate: 30, weekly_wage: 0,    charge_out_rate: 65, active: true, created_at: iso(today) },
+  { id: 'w-pierce', name: 'Pierce', cost_rate: 35, weekly_wage: 900,  charge_out_rate: 65, active: true, created_at: iso(today) },
+  { id: 'w-gavin',  name: 'Gavin',  cost_rate: 50, weekly_wage: 0,    charge_out_rate: 65, active: true, created_at: iso(today) },
+  { id: 'w-alex',   name: 'Alex',   cost_rate: 0,  weekly_wage: 1250, charge_out_rate: 65, active: true, created_at: iso(today) },
 ];
 
 export const DEMO_PROJECTS: Project[] = [
@@ -42,6 +43,7 @@ export const DEMO_PROJECTS: Project[] = [
     quoted_hours: 320,
     materials_budget: 6500,
     daily_hours_warning: 8,
+    target_profit: null,
     status: 'active',
     color_tag: '#7ba48f',
     start_date: iso(addDays(monday, -14)),
@@ -59,6 +61,7 @@ export const DEMO_PROJECTS: Project[] = [
     quoted_hours: 140,
     materials_budget: 3000,
     daily_hours_warning: 8,
+    target_profit: null,
     status: 'active',
     color_tag: '#c8a46a',
     start_date: iso(addDays(monday, -7)),
@@ -76,6 +79,7 @@ export const DEMO_PROJECTS: Project[] = [
     quoted_hours: 80,
     materials_budget: 1800,
     daily_hours_warning: 6,
+    target_profit: null,
     status: 'active',
     color_tag: '#c08a8a',
     start_date: iso(addDays(monday, -3)),
@@ -93,6 +97,7 @@ export const DEMO_PROJECTS: Project[] = [
     quoted_hours: 120,
     materials_budget: 2400,
     daily_hours_warning: null,
+    target_profit: 4500,
     status: 'complete',
     color_tag: '#8b8b94',
     start_date: iso(addDays(monday, -56)),

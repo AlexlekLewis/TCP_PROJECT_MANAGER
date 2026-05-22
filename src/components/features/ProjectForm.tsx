@@ -146,6 +146,22 @@ export function ProjectForm({ open, onClose, project }: Props) {
             </div>
           </div>
           <div className="space-y-1.5">
+            <Label>Target profit $ (optional)</Label>
+            <Input
+              type="number"
+              step="100"
+              min="0"
+              placeholder="What you expect to clear on this job after all costs"
+              value={form.target_profit ?? ''}
+              onChange={(e) =>
+                setForm({ ...form, target_profit: e.target.value ? +e.target.value : null })
+              }
+            />
+            <p className="text-xs text-muted-foreground">
+              Used on the project detail page to show on-track / at-risk / over-budget as the job progresses.
+            </p>
+          </div>
+          <div className="space-y-1.5">
             <Label>Daily hours warning per worker (optional)</Label>
             <Input
               type="number"
@@ -233,6 +249,7 @@ function defaultForm(): Partial<Project> {
     quoted_price: null,
     quoted_hours: null,
     materials_budget: null,
+    target_profit: null,
     daily_hours_warning: null,
     status: 'active',
     color_tag: '#a8a8b0',

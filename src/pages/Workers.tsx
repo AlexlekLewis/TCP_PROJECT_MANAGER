@@ -51,7 +51,13 @@ export default function WorkersPage() {
                     {!w.active && <Badge variant="secondary">inactive</Badge>}
                   </div>
                   <p className="text-xs text-muted-foreground">
-                    {formatCurrency(w.hourly_rate, { whole: false })}/h
+                    {Number(w.cost_rate ?? 0) > 0 && (
+                      <>cost {formatCurrency(w.cost_rate, { whole: false })}/h · </>
+                    )}
+                    {Number(w.weekly_wage ?? 0) > 0 && (
+                      <>{formatCurrency(w.weekly_wage, { whole: true })}/wk · </>
+                    )}
+                    charge {formatCurrency(w.charge_out_rate, { whole: false })}/h
                   </p>
                 </div>
                 <Button variant="ghost" size="icon" onClick={() => setEditing(w)}>
@@ -81,29 +87,33 @@ function WorkerDialog({
   const create = useCreateWorker();
   const update = useUpdateWorker();
   const [name, setName] = useState(worker?.name ?? '');
-  const [rate, setRate] = useState(String(worker?.hourly_rate ?? ''));
+  const [costRate, setCostRate] = useState(String(worker?.cost_rate ?? ''));
+  const [weeklyWage, setWeeklyWage] = useState(String(worker?.weekly_wage ?? ''));
+  const [chargeOut, setChargeOut] = useState(String(worker?.charge_out_rate ?? '65'));
   const [active, setActive] = useState(worker?.active ?? true);
 
   const submit = async () => {
     if (!name.trim()) return;
+    const patch = {
+      name,
+      cost_rate: Number.parseFloat(costRate) || 0,
+      weekly_wage: Number.parseFloat(weeklyWage) || 0,
+      charge_out_rate: Number.parseFloat(chargeOut) || 65,
+      active,
+    };
     try {
       if (worker) {
-        await update.mutateAsync({
-          id: worker.id,
-          patch: { name, hourly_rate: Number.parseFloat(rate) || 0, active },
-        });
+        await update.mutateAsync({ id: worker.id, patch });
         toast.success('Worker updated');
       } else {
-        await create.mutateAsync({
-          name,
-          hourly_rate: Number.parseFloat(rate) || 0,
-          active: true,
-        });
+        await create.mutateAsync(patch);
         toast.success('Worker added');
       }
       onClose();
       setName('');
-      setRate('');
+      setCostRate('');
+      setWeeklyWage('');
+      setChargeOut('65');
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Save failed');
     }
@@ -120,9 +130,40 @@ function WorkerDialog({
             <Label>Name</Label>
             <Input value={name} onChange={(e) => setName(e.target.value)} />
           </div>
-          <div className="space-y-1.5">
-            <Label>Hourly rate (AUD)</Label>
-            <Input type="number" step="0.5" value={rate} onChange={(e) => setRate(e.target.value)} />
+          <div className="grid grid-cols-3 gap-3">
+            <div className="space-y-1.5">
+              <Label>Cost rate $/h</Label>
+              <Input
+                type="number"
+                step="0.5"
+                min="0"
+                value={costRate}
+                onChange={(e) => setCostRate(e.target.value)}
+              />
+              <p className="text-[10px] text-muted-foreground">What you pay per hour.</p>
+            </div>
+            <div className="space-y-1.5">
+              <Label>Fixed weekly $</Label>
+              <Input
+                type="number"
+                step="50"
+                min="0"
+                value={weeklyWage}
+                onChange={(e) => setWeeklyWage(e.target.value)}
+              />
+              <p className="text-[10px] text-muted-foreground">Owner draw / apprentice stipend.</p>
+            </div>
+            <div className="space-y-1.5">
+              <Label>Charge-out $/h</Label>
+              <Input
+                type="number"
+                step="0.5"
+                min="0"
+                value={chargeOut}
+                onChange={(e) => setChargeOut(e.target.value)}
+              />
+              <p className="text-[10px] text-muted-foreground">Billed to client.</p>
+            </div>
           </div>
           {worker && (
             <label className="flex items-center gap-2 text-sm">

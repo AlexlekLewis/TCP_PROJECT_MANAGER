@@ -183,6 +183,30 @@ export default function ProjectDetailPage() {
                     : 'success'
             }
           />
+          {totals.targetProfit != null && (
+            <StatCard
+              label={`Profit vs target (${formatCurrency(totals.targetProfit, { whole: true })})`}
+              value={formatCurrency(totals.projectedProfit ?? 0, { whole: true })}
+              sub={
+                totals.profitHealth === 'on_track'
+                  ? 'On track ✓'
+                  : totals.profitHealth === 'at_risk'
+                    ? 'At risk — within 10% under'
+                    : totals.profitHealth === 'over_budget'
+                      ? 'Over budget — more than 10% under'
+                      : undefined
+              }
+              tone={
+                totals.profitHealth === 'on_track'
+                  ? 'success'
+                  : totals.profitHealth === 'at_risk'
+                    ? 'warning'
+                    : totals.profitHealth === 'over_budget'
+                      ? 'danger'
+                      : 'muted'
+              }
+            />
+          )}
         </section>
       )}
 
@@ -284,7 +308,7 @@ export default function ProjectDetailPage() {
                       </span>
                       {canSeeFinancials && (
                         <span className="w-20 text-right tabular-nums text-muted-foreground">
-                          {formatCurrency(Number(e.hours) * Number(w?.hourly_rate ?? 0), {
+                          {formatCurrency(Number(e.hours) * Number(w?.cost_rate ?? 0), {
                             whole: true,
                           })}
                         </span>

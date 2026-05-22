@@ -42,7 +42,7 @@ function AdminDashboard() {
 
   const totals = useMemo(() => {
     const hours = thisWeekEntries.reduce((s, e) => s + Number(e.hours), 0);
-    const rateById = new Map(workers.map((w) => [w.id, w.hourly_rate]));
+    const rateById = new Map(workers.map((w) => [w.id, w.cost_rate]));
     const labourCost = thisWeekEntries.reduce(
       (s, e) => s + Number(e.hours) * Number(rateById.get(e.worker_id) ?? 0),
       0,

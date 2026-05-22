@@ -21,11 +21,21 @@ export interface Worker {
   id: UUID;
   name: string;
   /**
-   * Admin only. Managers reading via the `workers_visible` view receive
-   * `null` here — `useCanSeeFinancials()` should already be gating any UI
-   * that surfaces this number, and downstream maths must coalesce to 0.
+   * Cost per hour worked (what the business pays the worker per hour).
+   * Admin only — managers see `null` via workers_visible. Was previously
+   * named `hourly_rate`; renamed to clarify semantics in the 2026-05-22
+   * profit-model migration.
    */
-  hourly_rate: number | null;
+  cost_rate: number | null;
+  /**
+   * Fixed weekly amount (owner draw, apprentice stipend) on top of /
+   * independent of cost_rate. Admin only.
+   */
+  weekly_wage: number | null;
+  /**
+   * Hourly rate billed to the client. Admin only. Default $65/hr.
+   */
+  charge_out_rate: number | null;
   active: boolean;
   created_at: ISODateTime;
 }
@@ -44,6 +54,11 @@ export interface Project {
    * UI flags the entry (yellow). Does not block the save.
    */
   daily_hours_warning: number | null;
+  /**
+   * Planned profit on this job (Alex sets at quote time). Admin only —
+   * managers see null. Used to compute profit health on the detail page.
+   */
+  target_profit: number | null;
   status: ProjectStatus;
   color_tag: string | null;
   start_date: ISODate | null;

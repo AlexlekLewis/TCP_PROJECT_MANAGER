@@ -41,7 +41,7 @@ export default function ReportsPage() {
 
   const workerRows = useMemo(() => computeWorkerWeek(entries, workers), [entries, workers]);
   const projectRows = useMemo(() => {
-    const rateById = new Map(workers.map((w) => [w.id, w.hourly_rate]));
+    const rateById = new Map(workers.map((w) => [w.id, w.cost_rate]));
     return projects
       .map((p) => {
         const te = entries.filter((t) => t.project_id === p.id);
@@ -68,7 +68,7 @@ export default function ReportsPage() {
     const rows = entries.map((e) => {
       const w = workerById.get(e.worker_id);
       const p = projectById.get(e.project_id);
-      const rate = Number(w?.hourly_rate ?? 0);
+      const rate = Number(w?.cost_rate ?? 0);
       return {
         date: e.entry_date,
         worker: w?.name ?? '',

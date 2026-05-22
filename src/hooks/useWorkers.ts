@@ -12,7 +12,8 @@ export function useWorkers() {
     queryKey: queryKeys.workers(),
     queryFn: async () => {
       if (env.demoMode) return store.workers;
-      // `workers_visible` masks hourly_rate → null for non-admin callers.
+      // `workers_visible` masks cost_rate + weekly_wage + charge_out_rate
+      // → null for non-admin callers.
       // Always read through the view; admin-write paths still target the
       // underlying `workers` table.
       const { data, error } = await supabase.from('workers_visible').select('*').order('name');

@@ -6,6 +6,42 @@ Format: one section per session, newest on top. Each entry: what changed, why, f
 
 ---
 
+## 2026-05-22 (profit model) — Per-worker cost / weekly / charge-out rates + project target profit + admin weekly P&L
+
+Alex's ask after the security audit: track project profit health and the weekly cost-vs-revenue of the team. With per-worker breakdown:
+- Charge-out rate: **$65/hr universal** (billed to client)
+- Internal cost: Jerry $30/hr, Gavin $50/hr, Pierce $35/hr
+- Pierce also has a fixed weekly stipend ($900 default, mature 2nd-year apprentice — Alex to refine)
+- Owner draw: Alex $1,250/week (fixed cost on the business; projects don't bear it)
+
+**DB** ([supabase/migrations/20260522000006_profit_model_rates_and_targets.sql](supabase/migrations/20260522000006_profit_model_rates_and_targets.sql))
+- `workers.hourly_rate` renamed to `cost_rate` (clarity: it's the per-hour cost to employ).
+- New `workers.weekly_wage` (numeric, default 0 — owner draw or apprentice stipend).
+- New `workers.charge_out_rate` (numeric, default 65 — billed to client).
+- New `projects.target_profit` (numeric, nullable — Alex sets at quote time).
+- `workers_visible` view refreshed to mask all three rate columns for non-admin.
+- `projects_visible` view refreshed to mask `target_profit` for non-admin.
+- `get_worker_rate(uuid)` returns the renamed `cost_rate`.
+- Live seed: Alex cost=0 weekly=1250, Gavin cost=50, Jerry cost=30, Pierce cost=35 weekly=900; all charge=65.
+
+**Frontend**
+- [src/types/db.ts](src/types/db.ts) — `Worker` has three rate fields; `Project` has `target_profit`. All admin-only (nullable for non-admin).
+- [src/lib/aggregations.ts](src/lib/aggregations.ts) — full rewrite:
+  - `computeProjectTotals` now emits `labourRevenue` (hours × charge_out), `projectedProfit`, `targetProfit`, and `profitHealth` (`on_track` ≥ target, `at_risk` within 10% under, `over_budget` more than 10% under). Legacy quote-based profit math preserved.
+  - New `computeWeeklyPnL(entries, materials, workers)` — revenue, hourly labour, fixed weekly wages (charged only when worker logged hours), materials, profit, margin %.
+  - `computeWorkerWeek` now returns `totalRevenue` alongside cost so the per-worker contribution view can render.
+- [src/lib/aggregations.test.ts](src/lib/aggregations.test.ts) — 10 specs covering cost vs revenue, profit health buckets, apprentice weekly+hourly cost, owner-draw inclusion, and the "no hours logged → no weekly wage" edge.
+- [src/components/features/ProjectForm.tsx](src/components/features/ProjectForm.tsx) — added "Target profit $" input (the **Set profit** Alex asked for).
+- [src/pages/Workers.tsx](src/pages/Workers.tsx) — WorkerDialog rewritten with three rate inputs (cost/h, fixed weekly, charge-out/h). List row shows all three as a compact line.
+- [src/pages/ProjectDetail.tsx](src/pages/ProjectDetail.tsx) — new "Profit vs target" StatCard renders below Gross margin when target_profit is set, coloured by health bucket (green/amber/red).
+- [src/pages/Admin.tsx](src/pages/Admin.tsx) — new top section: weekly P&L cards (revenue, labour, materials, profit + margin %) and a per-worker contribution table (hours, revenue, cost, contribution). Week navigation chevrons.
+- [src/lib/demo.ts](src/lib/demo.ts) — demo seed updated to the same values as live + `target_profit` added on each project.
+- Reports + Dashboard renamed `hourly_rate` → `cost_rate` references.
+
+**Quality** — 52/52 vitest (up from 46), 102/102 Playwright, typecheck + build clean.
+
+---
+
 ## 2026-05-22 (post-Gavin) — Manager lockdown audit + project-budget masking + bug-fix migration
 
 After Gavin's profile landed, Alex asked: "make sure he cannot access or hack into admin level." Did a full attack-surface pass impersonating Gavin's session in SQL.
