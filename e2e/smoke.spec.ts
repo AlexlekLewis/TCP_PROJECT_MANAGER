@@ -7,7 +7,9 @@ import { expect, test } from '@playwright/test';
 test.describe('Tricoat PM smoke', () => {
   test('login → dashboard renders demo data', async ({ page }) => {
     await page.goto('/login');
-    await expect(page.getByText(/Tricoat · PM/i)).toBeVisible();
+    // The Tricoat wordmark is the visual identity on Login
+    await expect(page.getByText('TRICOAT')).toBeVisible();
+    await expect(page.getByText('Project Manager')).toBeVisible();
     await page.getByRole('button', { name: /sign in/i }).click();
     await expect(page.getByRole('heading', { name: /Active projects/i })).toBeVisible();
     // Seeded demo projects present

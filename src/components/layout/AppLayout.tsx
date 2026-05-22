@@ -10,6 +10,7 @@ import {
   Users,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Logo } from '@/components/Logo';
 import { useAuth } from '@/context/AuthContext';
 import { cn } from '@/lib/utils';
 import { env } from '@/lib/env';
@@ -41,9 +42,11 @@ export function AppLayout() {
       {/* Top bar */}
       <header className="sticky top-0 z-40 border-b bg-background/95 backdrop-blur">
         <div className="mx-auto flex h-14 w-full max-w-6xl items-center gap-3 px-4">
-          <Link to="/" className="flex items-center gap-2">
-            <div className="h-7 w-7 rounded-md bg-gradient-to-br from-zinc-300 to-zinc-500 shadow-inner" />
-            <span className="text-sm font-semibold tracking-wide">TRICOAT · PM</span>
+          <Link to="/" className="flex items-center gap-3" aria-label="Tricoat home">
+            <Logo size="sm" />
+            <span className="hidden text-[10px] font-medium uppercase tracking-[0.2em] text-muted-foreground sm:inline">
+              · PM
+            </span>
           </Link>
           <nav className="ml-6 hidden gap-1 md:flex">
             {items.map((n) => (

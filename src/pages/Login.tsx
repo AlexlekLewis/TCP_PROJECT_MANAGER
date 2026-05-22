@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Logo } from '@/components/Logo';
 import { useAuth } from '@/context/AuthContext';
 import { env } from '@/lib/env';
 
@@ -30,9 +31,11 @@ export default function LoginPage() {
   return (
     <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-zinc-100 via-zinc-50 to-zinc-200 p-6">
       <Card className="w-full max-w-sm platinum-surface">
-        <CardHeader className="text-center">
-          <div className="mx-auto mb-3 h-10 w-10 rounded-md bg-gradient-to-br from-zinc-400 to-zinc-700 shadow-inner" />
-          <CardTitle className="text-xl tracking-wide">Tricoat · PM</CardTitle>
+        <CardHeader className="items-center text-center">
+          <Logo size="lg" withTagline className="mb-3 justify-center" />
+          <CardTitle className="text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground">
+            Project Manager
+          </CardTitle>
           <CardDescription>
             {env.demoMode ? 'Demo mode — tap Sign in to explore' : 'Sign in to continue'}
           </CardDescription>

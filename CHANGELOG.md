@@ -6,6 +6,38 @@ Format: one section per session, newest on top. Each entry: what changed, why, f
 
 ---
 
+## 2026-05-22 (later) — Real brand identity: indigo wordmark + Logo component
+
+Alex shared the actual Tricoat Painting & Decorating logo. Swapped from the generic platinum theme to the real visual identity.
+
+**Brand colours** ([src/index.css](src/index.css))
+- **Primary → Tricoat indigo** `hsl(240 60% 28%)` — the colour of the TRICOAT wordmark. Cascades through every primary button, ring, focus state, and active nav item.
+- Added `--brand-indigo` + `--brand-indigo-soft` tokens for tinted accents.
+- Kept `--brand-accent` (burnished copper) for the secondary CTA (e.g. "Log today's work" button) — copper-on-indigo is a deliberate complementary pairing.
+- Foreground bumped to `240 14% 10%` for slightly cooler black to harmonise.
+- Dark mode mirror: primary `hsl(240 60% 70%)` (lifted lightness for contrast on dark).
+- `theme-color` meta tag in [index.html](index.html) updated to `#1f1f73` so iOS Safari address bar tints with the brand.
+
+**New [src/components/Logo.tsx](src/components/Logo.tsx)** — drop-in component:
+1. Tries `/logo.svg` first (preferred — vector, scales)
+2. Falls back to `/logo.png` (raster)
+3. Then falls back to a **CSS wordmark** using the indigo brand token — typographic "TRICOAT" with optional "Painting & Decorating" tagline
+
+So the moment Alex drops his SVG/PNG into `/public/logo.svg` (or `.png`), the component picks it up across the whole app. Until then, the wordmark fallback already looks branded.
+
+**Wired into:**
+- [AppLayout.tsx](src/components/layout/AppLayout.tsx) — top bar now shows `<Logo size="sm" /> · PM` instead of the platinum gradient square
+- [Login.tsx](src/pages/Login.tsx) — `<Logo size="lg" withTagline />` centred above a "Project Manager" subtitle. Smoke spec updated to assert the new wordmark text.
+
+**Quality**
+- `npm run build` clean (230 KB gzipped)
+- **96 / 96 Playwright specs** green across chromium + mobile-safari (smoke spec updated to look for `TRICOAT` + `Project Manager` instead of the old `Tricoat · PM`)
+- Re-deployed: https://tcpprojectmanagerbuild.vercel.app
+
+**For Alex**: drop your actual logo file at `public/logo.svg` (preferred) or `public/logo.png` and the Logo component will use it everywhere automatically. No code change required.
+
+---
+
 ## 2026-05-22 — Per-task time entries + per-project daily soft cap with flag-but-don't-block logic
 
 Alex's ask: per-task time, assign workers to different jobs on the same day, tally the worker's day, **flag (don't block) when a worker has been assigned more than X hours/day on a job**.
