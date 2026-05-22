@@ -6,6 +6,41 @@ Format: one section per session, newest on top. Each entry: what changed, why, f
 
 ---
 
+## 2026-05-22 (post-Gavin) — Manager lockdown audit + project-budget masking + bug-fix migration
+
+After Gavin's profile landed, Alex asked: "make sure he cannot access or hack into admin level." Did a full attack-surface pass impersonating Gavin's session in SQL.
+
+**Bug found + fixed** — [20260522000004_restore_current_role_name_execute.sql](supabase/migrations/20260522000004_restore_current_role_name_execute.sql)
+The earlier `lock_down_definer_function_exposure` migration revoked `execute on current_role_name()` from `authenticated`. But `is_admin()` / `is_manager()` are INVOKER (run as caller) and call `current_role_name()` internally — so any RLS policy referencing `is_admin()` was failing with "permission denied for function" for *every* authenticated user, including admin. Would have blocked Alex's first attempt to create a real project. Restored grant.
+
+**Project-budget masking** — [20260522000005_hide_project_budget_from_manager.sql](supabase/migrations/20260522000005_hide_project_budget_from_manager.sql) + [src/hooks/useProjects.ts](src/hooks/useProjects.ts)
+Audit revealed `select * from projects` returned `quoted_price` + `materials_budget` to manager in the raw payload. Same pattern we fixed for workers — `projects_visible` view with `security_invoker = false` returns those two as null unless `is_admin()`. Base table `select` revoked from authenticated; `select (id)` granted to support `useCreateProject`'s INSERT...RETURNING id. `useProjects` / `useProject` switched to read from the view. `useCreateProject` now does insert → re-fetch from view (two queries).
+
+**Attack matrix run as Gavin** — verified the lockdown end-to-end:
+
+| Attack | Result |
+|---|---|
+| `select * from workers` directly | blocked (permission denied) |
+| `select * from workers_visible` | rates returned as NULL ✓ |
+| `update profiles set role='admin' where id=auth.uid()` | 0 rows affected (no UPDATE policy on profiles) ✓ |
+| `select * from audit_log` | 0 rows (RLS admin-only) ✓ |
+| `insert into week_locks(...)` | blocked by RLS write-check ✓ |
+| `insert into projects(...)` | blocked by RLS write-check ✓ |
+| `current_role_name()` direct RPC | callable (needed by RLS — restored) |
+| `get_worker_rate(uuid)` direct RPC | returns NULL (function gates on is_admin) ✓ |
+| `insert into profiles values(...,'admin',...)` | blocked by RLS (no INSERT policy) ✓ |
+| `select * from projects` | blocked (permission denied) ✓ |
+| `select * from projects_visible` | quoted_price=NULL, materials_budget=NULL, quoted_hours visible ✓ |
+| `delete from profiles where id != auth.uid()` | 0 rows affected ✓ |
+| `update settings set overhead_percent=99` | 0 rows affected ✓ |
+| `log_locked_write()` direct RPC | blocked (revoked) ✓ |
+
+**Known residual exposure (deferred)** — `material_entries.cost` is still readable to manager via `select * from material_entries`. Lower priority: managers log materials themselves so they know their own values; in a 2-person team the only "leaked" rows are admin-entered ones. Fix would mirror the projects pattern. Documented for a future session.
+
+**Quality** — 46/46 vitest, typecheck clean, build clean (224 KB gz).
+
+---
+
 ## 2026-05-22 (go-live prep) — Manager can no longer read hourly_rate, ever
 
 Before bringing Gavin online, Alex asked to confirm "manager can only see hours, never costs". Answer: **no, not until now**. The UI hid the rate column via `useCanSeeFinancials()` but the underlying `useWorkers` query did `select * from workers` and returned `hourly_rate` in the JSON payload — a curious manager opening DevTools would have seen everyone's pay rate.

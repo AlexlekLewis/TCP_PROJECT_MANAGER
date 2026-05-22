@@ -12,8 +12,10 @@ export function useProjects() {
     queryKey: queryKeys.projects(),
     queryFn: async () => {
       if (env.demoMode) return store.projects;
+      // `projects_visible` masks quoted_price + materials_budget to null
+      // for non-admin callers. Base `projects` table reads are revoked.
       const { data, error } = await supabase
-        .from('projects')
+        .from('projects_visible')
         .select('*')
         .order('created_at', { ascending: false });
       if (error) throw error;
@@ -31,7 +33,11 @@ export function useProject(id: string | null) {
     queryFn: async () => {
       if (!id) return null;
       if (env.demoMode) return store.projects.find((p) => p.id === id) ?? null;
-      const { data, error } = await supabase.from('projects').select('*').eq('id', id).maybeSingle();
+      const { data, error } = await supabase
+        .from('projects_visible')
+        .select('*')
+        .eq('id', id)
+        .maybeSingle();
       if (error) throw error;
       return data as Project | null;
     },
@@ -43,9 +49,18 @@ export function useCreateProject() {
   return useMutation({
     mutationFn: async (input: Omit<Project, 'id' | 'created_at' | 'updated_at'>) => {
       if (env.demoMode) return demoStore.createProject(input);
-      const { data, error } = await supabase.from('projects').insert(input).select().single();
-      if (error) throw error;
-      return data as Project;
+      // INSERT into base table (admin-only via RLS), then re-fetch via the
+      // role-masked view. The base table only grants `select (id)` to
+      // authenticated, so `.select('id')` is the maximum RETURNING shape.
+      const ins = await supabase.from('projects').insert(input).select('id').single();
+      if (ins.error) throw ins.error;
+      const out = await supabase
+        .from('projects_visible')
+        .select('*')
+        .eq('id', ins.data.id)
+        .single();
+      if (out.error) throw out.error;
+      return out.data as Project;
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.projects() }),
   });
