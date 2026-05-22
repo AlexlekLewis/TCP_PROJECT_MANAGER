@@ -6,6 +6,47 @@ Format: one section per session, newest on top. Each entry: what changed, why, f
 
 ---
 
+## 2026-05-22 (latest) — Supabase project re-created in AlexlekLewis's Org + all 8 migrations applied
+
+Alex wanted `tricoat-pm` moved out of his personal Vercel-managed Free org into `AlexlekLewis's Org` (the org the Supabase MCP can reach). Dashboard transfer was offered first; he authorized the $10/month Pro slot and asked to re-create fresh instead.
+
+**New project**
+- Name: `tricoat-pm`
+- Ref: `kihptbwdbkqmopnrtdew` (old: `yvopfgylhqbkiqfvuqwu` — to be deleted by Alex)
+- Region: `ap-southeast-2` (Sydney)
+- URL: https://kihptbwdbkqmopnrtdew.supabase.co
+- Org: `AlexlekLewis's Org` (`wyfwthhokirksvrnblsb`)
+- Cost: $10/month (authorized in chat)
+- Created via `create_project` MCP tool — Postgres 17.6.1.121
+
+**Migrations applied via `apply_migration` MCP, in order**
+1. `schema` — 9 tables, 3 enums, 9 indexes
+2. `functions` — 8 helpers + 3 triggers + `save_voice_log_entries` RPC
+3. `rls` — all tables enabled, week-lock-aware insert/update/delete
+4. `seed_workers` — Alex, Gavin, Jerry, Pierce @ $0/hr
+5. `security_hardening` — `search_path` pinned + reason-required for locked-week admin writes + week_locks audit
+6. `per_task_and_warnings` — `time_entries.task` + `projects.daily_hours_warning`
+7. `payroll_integrity_hardening` — `created_by` default + RLS WITH CHECK + `workers_public` view + `get_worker_rate` + `uuid_for_week`
+8. **NEW** `lock_down_definer_function_exposure` ([supabase/migrations/20260522000002_lock_down_definer_function_exposure.sql](supabase/migrations/20260522000002_lock_down_definer_function_exposure.sql))
+
+`get_advisors` reduced from 10 WARN lints → 2 by revoking `execute` on internal SECURITY DEFINER functions:
+- `revoke execute on current_role_name()` from public/anon/authenticated — internal helper consumed only by `is_admin`/`is_manager`.
+- `revoke execute on log_locked_write()` + `log_week_lock_change()` from all three — these fire only as triggers, never as RPCs.
+- `revoke execute on get_worker_rate(uuid)` + `save_voice_log_entries(...)` from public/anon — kept the `authenticated` grant since those ARE meant to be invoked by signed-in users.
+
+Two remaining WARN lints (`get_worker_rate` + `save_voice_log_entries` on `authenticated`) are by design — accepted and documented in the migration file.
+
+**Local pointer updates** (all gitignored, kept locally; mentioned here for posterity)
+- `.env.local` — `VITE_SUPABASE_URL` + `VITE_SUPABASE_ANON_KEY` updated to new ref + key
+- `supabase/.temp/project-ref` — points at the new ref
+- Memory: `reference_supabase_project.md` rewritten with new ref + org + plan + applied-migration list; `MEMORY.md` index line updated
+
+**What's still on Alex's plate**
+1. Pause/delete the old project at https://supabase.com/dashboard/project/yvopfgylhqbkiqfvuqwu (free tier — costs nothing while idle, but tidy).
+2. Update Vercel production env vars: add `VITE_SUPABASE_URL` + `VITE_SUPABASE_ANON_KEY` pointing at the new project (currently only stale Firebase vars are configured; the prod deploy runs on demo mode so nothing's broken — yet). I asked permission before touching Vercel env via CLI; awaiting decision.
+
+---
+
 ## 2026-05-22 (even later) — Dev-team review #2 + payroll-integrity hardening
 
 Five blind specialist reviews (FE / Postgres / QA / AppSec / Product) audited the codebase end-to-end. Synthesised in [docs/dev-team-review-2.md](docs/dev-team-review-2.md). Consensus verdict: **"safe to keep building, not yet safe to cut a payroll cheque from."** Ten fixes applied tonight; eight deferred to dedicated sessions.
