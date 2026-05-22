@@ -6,6 +6,26 @@ Format: one section per session, newest on top. Each entry: what changed, why, f
 
 ---
 
+## 2026-05-22 (go-live prep) — Manager can no longer read hourly_rate, ever
+
+Before bringing Gavin online, Alex asked to confirm "manager can only see hours, never costs". Answer: **no, not until now**. The UI hid the rate column via `useCanSeeFinancials()` but the underlying `useWorkers` query did `select * from workers` and returned `hourly_rate` in the JSON payload — a curious manager opening DevTools would have seen everyone's pay rate.
+
+**DB** ([supabase/migrations/20260522000003_hide_worker_rate_from_manager.sql](supabase/migrations/20260522000003_hide_worker_rate_from_manager.sql))
+- `revoke select on workers from anon, authenticated` — direct base-table reads denied for both roles.
+- New `workers_visible` view with `security_invoker = false` returning `case when is_admin() then hourly_rate else null end`. Manager sees null; admin sees the real number.
+- Dropped the superseded `workers_public` (it was security_invoker = true and no longer reachable with base-table SELECT revoked).
+- Verified by querying the view from the MCP (service role has no auth.uid → is_admin() false → all 4 workers returned with `hourly_rate: null`).
+
+**Frontend**
+- [src/hooks/useWorkers.ts](src/hooks/useWorkers.ts) — switched the SELECT to `from('workers_visible')`.
+- [src/types/db.ts](src/types/db.ts) — `Worker.hourly_rate` widened to `number | null` with a comment explaining when each shows up.
+
+**Compatibility check** — `Worker.hourly_rate` is read in 6 places (aggregations, ProjectDetail labour-cost calc, Reports payroll math, Workers admin page, Dashboard breakdown, demo seed). Five already null-coalesce via `Number(rate ?? 0)` or `?? 0`; the sixth (Workers.tsx) is admin-only via route guard, never rendered for manager. Typecheck + 46/46 unit + build all clean.
+
+**Advisor**: 1 expected new "security_definer_view" warning (lint 0010) on `workers_visible`. Intentional — the view's narrow purpose (single masked column, gated by `is_admin()`) is documented in the migration. Other 3 lints unchanged.
+
+---
+
 ## 2026-05-22 (latest) — Supabase project re-created in AlexlekLewis's Org + all 8 migrations applied
 
 Alex wanted `tricoat-pm` moved out of his personal Vercel-managed Free org into `AlexlekLewis's Org` (the org the Supabase MCP can reach). Dashboard transfer was offered first; he authorized the $10/month Pro slot and asked to re-create fresh instead.

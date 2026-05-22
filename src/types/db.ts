@@ -20,7 +20,12 @@ export interface Profile {
 export interface Worker {
   id: UUID;
   name: string;
-  hourly_rate: number;
+  /**
+   * Admin only. Managers reading via the `workers_visible` view receive
+   * `null` here — `useCanSeeFinancials()` should already be gating any UI
+   * that surfaces this number, and downstream maths must coalesce to 0.
+   */
+  hourly_rate: number | null;
   active: boolean;
   created_at: ISODateTime;
 }
