@@ -14,6 +14,7 @@ import {
 import type {
   MaterialEntry,
   Project,
+  ProjectScope,
   ProjectVariation,
   TimeEntry,
   VariationStatus,
@@ -32,6 +33,7 @@ class DemoStore {
   voiceLogs: VoiceLog[] = [...DEMO_VOICE_LOGS];
   weekLocks: WeekLock[] = [...DEMO_WEEK_LOCKS];
   variations: ProjectVariation[] = [];
+  scopes: ProjectScope[] = [];
 
   private listeners = new Set<Listener>();
 
@@ -179,6 +181,36 @@ class DemoStore {
             approved_by: status === 'approved' ? DEMO_USER_ID : null,
           }
         : v,
+    );
+    this.notify();
+  }
+
+  // --- Project scopes ----------------------------------------------------
+  createScope(s: Omit<ProjectScope, 'id' | 'created_at' | 'updated_at'>): ProjectScope {
+    const row: ProjectScope = {
+      ...s,
+      id: this.genId('sc-'),
+      created_at: this.now(),
+      updated_at: this.now(),
+    };
+    this.scopes = [...this.scopes, row];
+    this.notify();
+    return row;
+  }
+  updateScope(id: string, patch: Partial<ProjectScope>) {
+    this.scopes = this.scopes.map((s) =>
+      s.id === id ? { ...s, ...patch, updated_at: this.now() } : s,
+    );
+    this.notify();
+  }
+  deleteScope(id: string) {
+    this.scopes = this.scopes.filter((s) => s.id !== id);
+    // Detach entries that pointed at this scope (mirrors ON DELETE SET NULL).
+    this.timeEntries = this.timeEntries.map((t) =>
+      t.scope_id === id ? { ...t, scope_id: null } : t,
+    );
+    this.materialEntries = this.materialEntries.map((m) =>
+      m.scope_id === id ? { ...m, scope_id: null } : m,
     );
     this.notify();
   }

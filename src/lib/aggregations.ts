@@ -1,4 +1,11 @@
-import type { MaterialEntry, Project, ProjectVariation, TimeEntry, Worker } from '@/types/db';
+import type {
+  MaterialEntry,
+  Project,
+  ProjectScope,
+  ProjectVariation,
+  TimeEntry,
+  Worker,
+} from '@/types/db';
 
 // =============================================================================
 // Per-project totals (used on ProjectDetail + Reports breakdown)
@@ -41,6 +48,7 @@ export function computeProjectTotals(
   workers: Worker[],
   overheadPercent = 0,
   variations: ProjectVariation[] = [],
+  scopes: ProjectScope[] = [],
 ): ProjectTotals {
   const costRateById = new Map(workers.map((w) => [w.id, Number(w.cost_rate ?? 0)]));
   const chargeRateById = new Map(workers.map((w) => [w.id, Number(w.charge_out_rate ?? 0)]));
@@ -66,7 +74,16 @@ export function computeProjectTotals(
     .filter((v) => v.project_id === project.id && v.status === 'approved')
     .reduce((s, v) => s + Number(v.amount), 0);
 
-  const baseQuote = project.quoted_price ?? null;
+  // Base quote = Σ scope quoted_prices if scopes exist (multi-area project),
+  // else the legacy project.quoted_price field. This means once Alex
+  // adds scopes to a project, the per-scope quotes become the source of
+  // truth; project.quoted_price is effectively ignored for math.
+  const scopeQuoteSum = scopes
+    .filter((s) => s.project_id === project.id)
+    .reduce((sum, sc) => sum + (sc.quoted_price != null ? Number(sc.quoted_price) : 0), 0);
+  const hasScopeQuotes =
+    scopes.some((s) => s.project_id === project.id && s.quoted_price != null);
+  const baseQuote = hasScopeQuotes ? scopeQuoteSum : project.quoted_price ?? null;
   const totalQuote = baseQuote != null ? baseQuote + approvedVariations : null;
   const profit = totalQuote != null ? totalQuote - totalCost : null;
   const profitPercent =
@@ -225,6 +242,63 @@ export function computeWeeklyPnL(
     materialCost: round2(materialCost),
     profit: round2(profit),
     marginPercent: marginPercent != null ? round2(marginPercent) : null,
+  };
+}
+
+// =============================================================================
+// Per-scope rollup (used inside ProjectDetail's Scopes section)
+// =============================================================================
+
+export interface ScopeTotals {
+  labourHours: number;
+  labourCost: number;
+  labourRevenue: number;
+  materialCost: number;
+  /** Internal-cost-vs-charge-out profit so far, ignoring quote. */
+  projectedProfit: number;
+  /** Quote − costs (null when scope unquoted). */
+  quoteProfit: number | null;
+  hoursUsedPct: number | null;
+}
+
+export function computeScopeTotals(
+  scope: ProjectScope,
+  timeEntries: TimeEntry[],
+  materialEntries: MaterialEntry[],
+  workers: Worker[],
+): ScopeTotals {
+  const costRateById = new Map(workers.map((w) => [w.id, Number(w.cost_rate ?? 0)]));
+  const chargeRateById = new Map(workers.map((w) => [w.id, Number(w.charge_out_rate ?? 0)]));
+  const scopeTE = timeEntries.filter((t) => t.scope_id === scope.id);
+  const scopeME = materialEntries.filter((m) => m.scope_id === scope.id);
+
+  const labourHours = scopeTE.reduce((s, t) => s + Number(t.hours), 0);
+  const labourCost = scopeTE.reduce(
+    (s, t) => s + Number(t.hours) * (costRateById.get(t.worker_id) ?? 0),
+    0,
+  );
+  const labourRevenue = scopeTE.reduce(
+    (s, t) => s + Number(t.hours) * (chargeRateById.get(t.worker_id) ?? 0),
+    0,
+  );
+  const materialCost = scopeME.reduce((s, m) => s + Number(m.cost), 0);
+
+  const projectedProfit = labourRevenue - labourCost - materialCost;
+  const quoteProfit =
+    scope.quoted_price != null ? Number(scope.quoted_price) - labourCost - materialCost : null;
+  const hoursUsedPct =
+    scope.quoted_hours && scope.quoted_hours > 0
+      ? (labourHours / Number(scope.quoted_hours)) * 100
+      : null;
+
+  return {
+    labourHours: round2(labourHours),
+    labourCost: round2(labourCost),
+    labourRevenue: round2(labourRevenue),
+    materialCost: round2(materialCost),
+    projectedProfit: round2(projectedProfit),
+    quoteProfit: quoteProfit != null ? round2(quoteProfit) : null,
+    hoursUsedPct: hoursUsedPct != null ? round2(hoursUsedPct) : null,
   };
 }
 

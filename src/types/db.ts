@@ -88,6 +88,12 @@ export interface TimeEntry {
   entry_date: ISODate;
   worker_id: UUID;
   project_id: UUID;
+  /**
+   * Optional scope tag (e.g., "Exterior" / "Interior" on a multi-area
+   * project). null = project-general (travel, mobilisation, single-scope
+   * project).
+   */
+  scope_id: UUID | null;
   hours: number;
   /** Free-text label for the sub-task (e.g., "Ceilings", "Skirtings"). */
   task: string | null;
@@ -102,12 +108,35 @@ export interface MaterialEntry {
   id: UUID;
   entry_date: ISODate;
   project_id: UUID;
+  /** Optional scope tag — same semantics as TimeEntry.scope_id. */
+  scope_id: UUID | null;
   description: string;
   cost: number;
   supplier: string | null;
   created_by: UUID;
   ai_source_id: UUID | null;
   created_at: ISODateTime;
+}
+
+/**
+ * A priced section within a project — e.g. a job with separate exterior,
+ * interior, studio quotes. Time/material entries can optionally tag a
+ * scope. Project total quote rolls up = Σ scope quoted_prices when any
+ * scope exists, else uses Project.quoted_price.
+ */
+export interface ProjectScope {
+  id: UUID;
+  project_id: UUID;
+  name: string;
+  quoted_price: number | null;
+  quoted_hours: number | null;
+  materials_budget: number | null;
+  target_profit: number | null;
+  status: ProjectStatus;
+  order_index: number;
+  notes: string | null;
+  created_at: ISODateTime;
+  updated_at: ISODateTime;
 }
 
 export interface VoiceLog {

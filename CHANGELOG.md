@@ -6,6 +6,46 @@ Format: one section per session, newest on top. Each entry: what changed, why, f
 
 ---
 
+## 2026-05-24 (scopes) — Multi-area projects: split one project into priced scopes
+
+Alex's ask: "Park Street has three different quotes (exterior, interior, studio) but it's still the same project." Modelled as **project scopes** — child rows under a project, each with its own quote/hours/budget/target. Entries can optionally tag a scope; project total quote rolls up = Σ scope quotes when scopes exist.
+
+**DB** ([supabase/migrations/20260524000001_project_scopes.sql](supabase/migrations/20260524000001_project_scopes.sql))
+- New `project_scopes` table: id, project_id (FK on delete cascade), name, quoted_price, quoted_hours, materials_budget, target_profit, status (project_status enum — each scope can be active/complete independently), order_index, notes, timestamps.
+- `time_entries.scope_id` + `material_entries.scope_id` — nullable FKs `on delete set null` (deleting a scope detaches entries rather than losing them).
+- Partial indexes on `scope_id` for fast filtering.
+- RLS: admin-only writes, manager reads via `project_scopes_visible` view (mask quoted_price + materials_budget + target_profit for non-admin; expose name + quoted_hours + status so the day-entry picker works).
+
+**Aggregations** ([src/lib/aggregations.ts](src/lib/aggregations.ts))
+- New `computeScopeTotals(scope, entries, materials, workers)` — per-scope labour hours/cost/revenue + material cost + quote-profit + hours-used %.
+- `computeProjectTotals` accepts a new `scopes` param. When scopes exist with prices set, project total quote = Σ scope quotes (project.quoted_price ignored). Backward compatible — empty scopes array preserves prior behaviour.
+- 5 new vitest specs covering: rollup math, fallback to project.quoted_price when no scopes, per-scope filtering by scope_id, unquoted scope profit handling.
+
+**UI**
+- New [src/components/features/ScopesSection.tsx](src/components/features/ScopesSection.tsx) — admin-only section on ProjectDetail. Empty state explains "this is a single-quote project, add scopes for separate areas". Cards show per-scope quote, hours used (with progress bar), labour cost, materials, profit so far (coloured danger/warning/success). MoreVertical menu per card for Edit / Delete. Add-scope and edit-scope dialogs capture name + quote + hours + materials budget + target profit + status + notes.
+- ProjectDetail wired: `useProjectScopes` query, scopes passed into `computeProjectTotals` so the top financials KPIs reflect the rollup automatically.
+- DayEntryDialog: when picked project has scopes, a **Scope (optional)** select appears below the project picker. First option is "— Project-general (travel, mob, etc.) —" so general-purpose hours can stay scope-less. Same picker added to the Add Material form. Scope selection resets when project changes.
+- "Same as yesterday" clone preserves scope tagging from the source entries.
+
+**Hooks** ([src/hooks/useProjectScopes.ts](src/hooks/useProjectScopes.ts))
+- `useProjectScopes(projectId)` reads from `project_scopes_visible`.
+- `useCreateScope` does insert-then-readback-from-view (same pattern as `useCreateProject`).
+- `useUpdateScope` / `useDeleteScope` for the edit and detach flows.
+
+**Types**
+- New `ProjectScope` interface with all $ fields nullable for manager-side masking.
+- `TimeEntry.scope_id` + `MaterialEntry.scope_id` added (nullable UUID).
+- Demo seed + test fixtures + VoiceReview backfill updated to include `scope_id: null` everywhere.
+
+**Quality** — 59/59 vitest (+5 scope tests), 102/102 Playwright, typecheck + build clean (232 KB gz).
+
+**Deliberately deferred to v2**
+- Per-scope variations (variations stay project-level for now).
+- Auto-reorder scopes via drag-and-drop (order_index is settable but no UI for it yet).
+- Per-scope target_profit health badge with traffic-lights (currently only project-level).
+
+---
+
 ## 2026-05-22 (job-type + variations + manager drafts + owner-economics labelling)
 
 Alex's batch of asks: (Q1) clarify owner-income model on the admin P&L, (Q2) handle jobs with no fixed quote, (Q3) add scope variations on top of a quote, (Q4) let Gavin create draft projects so he's never blocked on logging hours. Chose **Model C — Floor + bonus** for owner economics.

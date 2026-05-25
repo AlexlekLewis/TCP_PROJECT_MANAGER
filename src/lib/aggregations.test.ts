@@ -1,6 +1,18 @@
 import { describe, expect, it } from 'vitest';
-import { computeProjectTotals, computeWeeklyPnL, computeWorkerWeek } from './aggregations';
-import type { MaterialEntry, Project, ProjectVariation, TimeEntry, Worker } from '@/types/db';
+import {
+  computeProjectTotals,
+  computeScopeTotals,
+  computeWeeklyPnL,
+  computeWorkerWeek,
+} from './aggregations';
+import type {
+  MaterialEntry,
+  Project,
+  ProjectScope,
+  ProjectVariation,
+  TimeEntry,
+  Worker,
+} from '@/types/db';
 
 const now = '2026-04-21T00:00:00Z';
 
@@ -36,12 +48,12 @@ const project: Project = {
 };
 
 const te: TimeEntry[] = [
-  { id: 't1', entry_date: '2026-04-20', worker_id: 'w1', project_id: 'p1', hours: 10, task: null, notes: null, created_by: 'u', ai_source_id: null, created_at: now, updated_at: now },
-  { id: 't2', entry_date: '2026-04-20', worker_id: 'w2', project_id: 'p1', hours: 8,  task: null, notes: null, created_by: 'u', ai_source_id: null, created_at: now, updated_at: now },
+  { id: 't1', entry_date: '2026-04-20', worker_id: 'w1', project_id: 'p1', hours: 10, task: null, notes: null, scope_id: null, created_by: 'u', ai_source_id: null, created_at: now, updated_at: now },
+  { id: 't2', entry_date: '2026-04-20', worker_id: 'w2', project_id: 'p1', hours: 8,  task: null, notes: null, scope_id: null, created_by: 'u', ai_source_id: null, created_at: now, updated_at: now },
 ];
 
 const me: MaterialEntry[] = [
-  { id: 'm1', entry_date: '2026-04-20', project_id: 'p1', description: 'Paint', cost: 500, supplier: null, created_by: 'u', ai_source_id: null, created_at: now },
+  { id: 'm1', entry_date: '2026-04-20', project_id: 'p1', scope_id: null, description: 'Paint', cost: 500, supplier: null, created_by: 'u', ai_source_id: null, created_at: now },
 ];
 
 describe('computeProjectTotals — cost + revenue + profit health', () => {
@@ -113,11 +125,64 @@ describe('computeProjectTotals — variations roll into total quote', () => {
   });
 });
 
+describe('Project scopes', () => {
+  const scopes: ProjectScope[] = [
+    { id: 'sc-ext', project_id: 'p1', name: 'Exterior', quoted_price: 5000, quoted_hours: 50, materials_budget: 800, target_profit: 1000, status: 'active', order_index: 0, notes: null, created_at: now, updated_at: now },
+    { id: 'sc-int', project_id: 'p1', name: 'Interior', quoted_price: 8000, quoted_hours: 70, materials_budget: 1200, target_profit: 1500, status: 'active', order_index: 1, notes: null, created_at: now, updated_at: now },
+    { id: 'sc-other', project_id: 'other', name: 'Wrong project', quoted_price: 9999, quoted_hours: null, materials_budget: null, target_profit: null, status: 'active', order_index: 0, notes: null, created_at: now, updated_at: now },
+  ];
+
+  const scopedTE: TimeEntry[] = [
+    // Jerry 10h on Exterior, Gavin 8h on Interior — same totals as the base fixture.
+    { ...te[0], scope_id: 'sc-ext' },
+    { ...te[1], scope_id: 'sc-int' },
+  ];
+
+  it('project total quote = Σ scope quoted_prices when scopes exist', () => {
+    const t = computeProjectTotals(project, scopedTE, me, workers, 0, [], scopes);
+    // Σ for p1 only: 5000 + 8000 = 13000
+    expect(t.totalQuote).toBe(13000);
+  });
+
+  it('project.quoted_price is ignored once scopes exist', () => {
+    // project.quoted_price is 10000 in the fixture; scope-rollup should override.
+    const t = computeProjectTotals(project, scopedTE, me, workers, 0, [], scopes);
+    expect(t.totalQuote).toBe(13000);
+    expect(t.totalQuote).not.toBe(10000);
+  });
+
+  it('falls back to project.quoted_price when no scopes', () => {
+    const t = computeProjectTotals(project, te, me, workers, 0, [], []);
+    expect(t.totalQuote).toBe(10000);
+  });
+
+  it('computeScopeTotals filters entries by scope_id', () => {
+    const ext = computeScopeTotals(scopes[0], scopedTE, me, workers);
+    // Exterior: Jerry 10h × 30 = 300 labour cost, × 65 = 650 revenue, no materials in scope (m1 has scope_id=null)
+    expect(ext.labourHours).toBe(10);
+    expect(ext.labourCost).toBe(300);
+    expect(ext.labourRevenue).toBe(650);
+    expect(ext.materialCost).toBe(0);
+    // quoted 5000 − 300 labour − 0 mat = 4700
+    expect(ext.quoteProfit).toBe(4700);
+    // hours used: 10/50 = 20%
+    expect(ext.hoursUsedPct).toBe(20);
+  });
+
+  it('computeScopeTotals returns null quoteProfit when scope is unquoted', () => {
+    const unquoted: ProjectScope = { ...scopes[0], quoted_price: null };
+    const t = computeScopeTotals(unquoted, scopedTE, me, workers);
+    expect(t.quoteProfit).toBe(null);
+    // projectedProfit still computes (revenue − labour − materials).
+    expect(t.projectedProfit).toBe(650 - 300 - 0);
+  });
+});
+
 describe('computeWorkerWeek — cost includes weekly_wage when worker logged hours', () => {
   const weekEntries: TimeEntry[] = [
     ...te,
     // Pierce logs 20h on p1
-    { id: 't3', entry_date: '2026-04-20', worker_id: 'w3', project_id: 'p1', hours: 20, task: null, notes: null, created_by: 'u', ai_source_id: null, created_at: now, updated_at: now },
+    { id: 't3', entry_date: '2026-04-20', worker_id: 'w3', project_id: 'p1', hours: 20, task: null, notes: null, scope_id: null, created_by: 'u', ai_source_id: null, created_at: now, updated_at: now },
   ];
 
   it('hourly worker: cost = hours × cost_rate', () => {
@@ -141,8 +206,8 @@ describe('computeWeeklyPnL — admin weekly P&L', () => {
   it('rolls up revenue, labour, materials, profit', () => {
     const weekEntries: TimeEntry[] = [
       ...te,
-      { id: 't3', entry_date: '2026-04-20', worker_id: 'w3', project_id: 'p1', hours: 20, task: null, notes: null, created_by: 'u', ai_source_id: null, created_at: now, updated_at: now },
-      { id: 't4', entry_date: '2026-04-21', worker_id: 'w4', project_id: 'p1', hours: 5,  task: null, notes: null, created_by: 'u', ai_source_id: null, created_at: now, updated_at: now },
+      { id: 't3', entry_date: '2026-04-20', worker_id: 'w3', project_id: 'p1', hours: 20, task: null, notes: null, scope_id: null, created_by: 'u', ai_source_id: null, created_at: now, updated_at: now },
+      { id: 't4', entry_date: '2026-04-21', worker_id: 'w4', project_id: 'p1', hours: 5,  task: null, notes: null, scope_id: null, created_by: 'u', ai_source_id: null, created_at: now, updated_at: now },
     ];
     const p = computeWeeklyPnL(weekEntries, me, workers);
 

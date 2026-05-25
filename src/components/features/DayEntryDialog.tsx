@@ -25,6 +25,7 @@ import { useBatchCreateTimeEntries, useCreateTimeEntry, useDeleteTimeEntry, useT
 import { useCreateMaterialEntry, useMaterialEntries, useDeleteMaterialEntry } from '@/hooks/useMaterialEntries';
 import { formatCurrency } from '@/lib/currency';
 import { validateHours } from '@/lib/hours';
+import { useProjectScopes } from '@/hooks/useProjectScopes';
 import { useCanSeeFinancials } from '@/lib/permissions';
 import { cn } from '@/lib/utils';
 
@@ -114,9 +115,19 @@ function DayEntryBody({
   // Form state for adding a time entry — seeded from the quick-log chip if given.
   const [workerId, setWorkerId] = useState<string>(initialWorkerId ?? '');
   const [projectId, setProjectId] = useState<string>(initialProjectId ?? '');
+  const [scopeId, setScopeId] = useState<string>('');
   const [hours, setHours] = useState<string>('');
   const [task, setTask] = useState<string>('');
   const [notes, setNotes] = useState<string>('');
+
+  // Scopes for the currently-picked project (time entry). Empty array
+  // when project has no scopes — picker is then hidden entirely.
+  const { data: timeScopes = [] } = useProjectScopes(projectId || null);
+  // Clear scope selection when project changes.
+  const handleProjectChange = (next: string) => {
+    setProjectId(next);
+    setScopeId('');
+  };
   const hoursInputRef = useRef<HTMLInputElement | null>(null);
 
   // Live tallies — sum each worker's hours across all of today's entries,
@@ -204,9 +215,15 @@ function DayEntryBody({
 
   // Form state for adding a material
   const [matProjectId, setMatProjectId] = useState<string>('');
+  const [matScopeId, setMatScopeId] = useState<string>('');
   const [matDesc, setMatDesc] = useState<string>('');
   const [matCost, setMatCost] = useState<string>('');
   const [matSupplier, setMatSupplier] = useState<string>('');
+  const { data: matScopes = [] } = useProjectScopes(matProjectId || null);
+  const handleMatProjectChange = (next: string) => {
+    setMatProjectId(next);
+    setMatScopeId('');
+  };
 
   const submitTime = async () => {
     if (!workerId || !projectId || !hours) return;
@@ -221,6 +238,7 @@ function DayEntryBody({
       entry_date: date,
       worker_id: workerId,
       project_id: projectId,
+      scope_id: scopeId || null,
       hours: h,
       task: task || null,
       notes: notes || null,
@@ -232,6 +250,7 @@ function DayEntryBody({
     setHours('');
     setTask('');
     setNotes('');
+    setScopeId('');
   };
 
   const submitMaterial = async () => {
@@ -239,6 +258,7 @@ function DayEntryBody({
     await createME.mutateAsync({
       entry_date: date,
       project_id: matProjectId,
+      scope_id: matScopeId || null,
       description: matDesc,
       cost: Number.parseFloat(matCost),
       supplier: matSupplier || null,
@@ -270,6 +290,9 @@ function DayEntryBody({
           entry_date: date,
           worker_id: e.worker_id,
           project_id: e.project_id,
+          // Preserve scope tagging from yesterday's entries so clone-day
+          // recreates the same scope split (Pierce on Exterior etc.).
+          scope_id: e.scope_id ?? null,
           hours: Number(e.hours),
           task: e.task,
           notes: e.notes,
@@ -442,7 +465,7 @@ function DayEntryBody({
             </div>
             <div className="space-y-1.5">
               <Label>Project</Label>
-              <Select value={projectId} onValueChange={setProjectId}>
+              <Select value={projectId} onValueChange={handleProjectChange}>
                 <SelectTrigger>
                   <SelectValue placeholder="Pick project" />
                 </SelectTrigger>
@@ -456,6 +479,29 @@ function DayEntryBody({
               </Select>
             </div>
           </div>
+          {timeScopes.length > 0 && (
+            <div className="space-y-1.5">
+              <Label>Scope (optional)</Label>
+              <Select
+                value={scopeId || '__none__'}
+                onValueChange={(v) => setScopeId(v === '__none__' ? '' : v)}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none__">— Project-general (travel, mob, etc.) —</SelectItem>
+                  {timeScopes
+                    .filter((s) => s.status === 'active')
+                    .map((s) => (
+                      <SelectItem key={s.id} value={s.id}>
+                        {s.name}
+                      </SelectItem>
+                    ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
           <div className="grid gap-3 md:grid-cols-[1fr_1fr_2fr]">
             <div className="space-y-1.5">
               <Label>Hours</Label>
@@ -565,7 +611,7 @@ function DayEntryBody({
           </legend>
           <div className="space-y-1.5">
             <Label>Project</Label>
-            <Select value={matProjectId} onValueChange={setMatProjectId}>
+            <Select value={matProjectId} onValueChange={handleMatProjectChange}>
               <SelectTrigger>
                 <SelectValue placeholder="Pick project" />
               </SelectTrigger>
@@ -578,6 +624,29 @@ function DayEntryBody({
               </SelectContent>
             </Select>
           </div>
+          {matScopes.length > 0 && (
+            <div className="space-y-1.5">
+              <Label>Scope (optional)</Label>
+              <Select
+                value={matScopeId || '__none__'}
+                onValueChange={(v) => setMatScopeId(v === '__none__' ? '' : v)}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none__">— Project-general —</SelectItem>
+                  {matScopes
+                    .filter((s) => s.status === 'active')
+                    .map((s) => (
+                      <SelectItem key={s.id} value={s.id}>
+                        {s.name}
+                      </SelectItem>
+                    ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
           <div className="space-y-1.5">
             <Label>Description</Label>
             <Input

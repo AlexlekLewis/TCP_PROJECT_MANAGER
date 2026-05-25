@@ -41,9 +41,16 @@ import {
   useProjectVariations,
   useUpdateVariationStatus,
 } from '@/hooks/useProjectVariations';
+import {
+  useCreateScope,
+  useDeleteScope,
+  useProjectScopes,
+  useUpdateScope,
+} from '@/hooks/useProjectScopes';
 import { useUpdateProject } from '@/hooks/useProjects';
 import { computeProjectTotals } from '@/lib/aggregations';
 import { VariationsSection } from '@/components/features/VariationsSection';
+import { ScopesSection } from '@/components/features/ScopesSection';
 import { formatCurrency } from '@/lib/currency';
 import { formatHours } from '@/lib/hours';
 import { useAuth } from '@/context/AuthContext';
@@ -62,21 +69,25 @@ export default function ProjectDetailPage() {
   const { data: timeEntries = [] } = useTimeEntriesForProject(id ?? '');
   const { data: materials = [] } = useMaterialEntriesForProject(id ?? '');
   const { data: variations = [] } = useProjectVariations(id ?? null);
+  const { data: scopes = [] } = useProjectScopes(id ?? null);
   const canDelete = useProjectCanDelete(id);
   const archive = useArchiveProject();
   const del = useDeleteProject();
   const updateProject = useUpdateProject();
   const createVariation = useCreateVariation();
   const updateVariationStatus = useUpdateVariationStatus();
+  const createScope = useCreateScope();
+  const updateScope = useUpdateScope();
+  const deleteScope = useDeleteScope();
   const working = archive.isPending || del.isPending;
 
   const workerById = useMemo(() => new Map(workers.map((w) => [w.id, w])), [workers]);
   const totals = useMemo(
     () =>
       project
-        ? computeProjectTotals(project, timeEntries, materials, workers, 0, variations)
+        ? computeProjectTotals(project, timeEntries, materials, workers, 0, variations, scopes)
         : null,
-    [project, timeEntries, materials, workers, variations],
+    [project, timeEntries, materials, workers, variations, scopes],
   );
 
   const markReviewed = async () => {
@@ -284,6 +295,26 @@ export default function ProjectDetailPage() {
             icon={<TrendingUp className="h-4 w-4" />}
           />
         </section>
+      )}
+
+      {/* Scopes — multi-area projects with separate priced sections. Admin only. */}
+      {role === 'admin' && (
+        <ScopesSection
+          projectId={project.id}
+          scopes={scopes}
+          timeEntries={timeEntries}
+          materialEntries={materials}
+          workers={workers}
+          onCreate={async (input) => {
+            await createScope.mutateAsync(input);
+          }}
+          onUpdate={async (id, patch) => {
+            await updateScope.mutateAsync({ id, patch });
+          }}
+          onDelete={async (id) => {
+            await deleteScope.mutateAsync(id);
+          }}
+        />
       )}
 
       {/* Variations (admin only). Approved variations roll into total quote + margin. */}
