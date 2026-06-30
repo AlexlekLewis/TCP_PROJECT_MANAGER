@@ -6,6 +6,20 @@ Format: one section per session, newest on top. Each entry: what changed, why, f
 
 ---
 
+## 2026-07-01 (ship manager scopes + hide internal hours target) — Gavin can finally see the scope breakdown live
+
+Alex (live, on the deployed app): "Gavin can't see or edit the scopes/task list — I updated Northcote with scopes and went into Gavin's view and can't see them." Root cause: the **2026-06-12 manager-scopes work was never committed or deployed** — production still ran the version where `ProjectDetail` gated the whole Scopes + Variations sections behind `role === 'admin'`. The live DB was already serving scopes to a manager correctly; it was purely the deployed frontend.
+
+**Shipped the pending manager-scopes feature** — committed the working-tree changes (`feat(scopes)` `7d95dcf`) and applied [20260612000001_manager_scopes_variations.sql](supabase/migrations/20260612000001_manager_scopes_variations.sql) to the live project (`kihptbwdbkqmopnrtdew`) via MCP. Verified live: `project_variations_visible` view created, `amount` nullable, manager scope/variation policies present.
+
+**Hide the internal hours target from Gavin** ([ProjectDetail.tsx](src/pages/ProjectDetail.tsx), [ManagerLanding.tsx](src/pages/ManagerLanding.tsx), [Projects.tsx](src/pages/Projects.tsx), [Dashboard.tsx](src/pages/Dashboard.tsx)) — Alex sets `project.quoted_hours` deliberately tighter than reality as an internal management lever; Gavin should only ever see the **scoped** hours. So `project.quoted_hours` is now admin-only everywhere: on the project page the manager's hours card + the project-level "Hours used" bar use the **sum of scope hours** (e.g. "33h of 50h scoped", 66%) instead of the quote (which showed 10% vs 320h); ManagerLanding shows "Xh logged" with no target; the Projects-list Hours row is admin-gated; Dashboard's quote/% are admin-gated (defensive — managers see ManagerLanding at `/`, not Dashboard). Admin view unchanged.
+
+**CI** ([.github/workflows/ci.yml](.github/workflows/ci.yml)) — the Secret-scan step had been failing on **every** commit (a harmless commented `# SUPABASE_SERVICE_ROLE_KEY=eyJ...` placeholder in `.env.example`); excluded `.env.example` from the grep so CI gives real signal again.
+
+**Deploy note:** pushing to `main` does **not** auto-deploy here — production ships via `vercel --prod` (CLI). Both the scopes fix and these changes were deployed that way and verified live.
+
+**Verification** — typecheck + production build clean; drove the app as Gavin (scoped-hours only, no internal target on any surface) and Alex (still sees 320h target, 10%).
+
 ## 2026-06-12 (manager powers) — Gavin can add scopes + variations, and edit/remove worker hours
 
 Alex's ask: "I need Gav to be able to add variations and scopes. And he needs to be able to edit worker hours and remove worker hours if he makes a mistake on a project." Decision (confirmed with Alex): **keep Gavin $-blind** — he gets the operational controls without ever seeing or setting money. See [ADR 005](docs/decisions/005-manager-scopes-variations.md).

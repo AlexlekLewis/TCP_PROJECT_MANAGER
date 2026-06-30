@@ -180,21 +180,27 @@ function AdminDashboard() {
                     {p.quoted_hours != null && (
                       <div className="space-y-1">
                         <div className="flex items-baseline justify-between text-xs">
+                          {/* Manager sees hours logged only — quoted_hours +
+                              the % vs target are Alex's internal numbers. */}
                           <span className="text-muted-foreground">
-                            Hours {formatHours(totals.labourHours)} /{' '}
-                            {formatHours(p.quoted_hours)}
+                            Hours {formatHours(totals.labourHours)}
+                            {canSeeFinancials && ` / ${formatHours(p.quoted_hours)}`}
                           </span>
-                          <span
-                            className={cn(
-                              'font-medium tabular-nums',
-                              hoursVariant === 'danger' && 'text-destructive',
-                              hoursVariant === 'warning' && 'text-warning',
-                            )}
-                          >
-                            {totals.hoursUsedPct?.toFixed(0)}%
-                          </span>
+                          {canSeeFinancials && (
+                            <span
+                              className={cn(
+                                'font-medium tabular-nums',
+                                hoursVariant === 'danger' && 'text-destructive',
+                                hoursVariant === 'warning' && 'text-warning',
+                              )}
+                            >
+                              {totals.hoursUsedPct?.toFixed(0)}%
+                            </span>
+                          )}
                         </div>
-                        <Progress value={totals.hoursUsedPct ?? 0} variant={hoursVariant} />
+                        {canSeeFinancials && (
+                          <Progress value={totals.hoursUsedPct ?? 0} variant={hoursVariant} />
+                        )}
                       </div>
                     )}
                     {canSeeFinancials && p.materials_budget != null && (

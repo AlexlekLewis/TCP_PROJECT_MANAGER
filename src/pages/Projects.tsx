@@ -250,10 +250,13 @@ function ProjectCard({
               </span>
             </div>
           )}
-          <div>
-            <span className="text-muted-foreground">Hours </span>
-            <span className="font-semibold tabular-nums">{p.quoted_hours ?? '—'}</span>
-          </div>
+          {/* quoted_hours is Alex's internal target — admin only. */}
+          {canSeeFinancials && (
+            <div>
+              <span className="text-muted-foreground">Hours </span>
+              <span className="font-semibold tabular-nums">{p.quoted_hours ?? '—'}</span>
+            </div>
+          )}
         </div>
         <Button variant="secondary" size="sm" asChild>
           <Link to={`/projects/${p.id}`}>Open</Link>

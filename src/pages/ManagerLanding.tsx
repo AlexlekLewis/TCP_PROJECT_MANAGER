@@ -209,9 +209,10 @@ export default function ManagerLanding() {
                   style={{ borderLeftColor: p.color_tag ?? 'hsl(var(--border))' }}
                 >
                   <p className="truncate text-sm font-medium">{p.name}</p>
+                  {/* Manager (Gavin) sees hours logged only — the project's
+                      quoted_hours is Alex's internal target and stays hidden. */}
                   <p className="mt-0.5 text-xs text-muted-foreground">
-                    {formatHours(projectHours)}
-                    {p.quoted_hours ? ` / ${formatHours(p.quoted_hours)}` : ''}
+                    {formatHours(projectHours)} logged
                   </p>
                 </Link>
               );

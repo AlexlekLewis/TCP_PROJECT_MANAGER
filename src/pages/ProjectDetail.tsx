@@ -92,6 +92,14 @@ export default function ProjectDetailPage() {
     [project, timeEntries, materials, workers, variations, scopes],
   );
 
+  // Gavin's world is the scoped breakdown. `project.quoted_hours` is Alex's
+  // internal (deliberately tighter) target and stays admin-only — the manager
+  // sees the sum of scope hours instead.
+  const scopedHours = useMemo(
+    () => scopes.reduce((sum, s) => sum + Number(s.quoted_hours ?? 0), 0),
+    [scopes],
+  );
+
   const markReviewed = async () => {
     if (!project) return;
     try {
@@ -115,6 +123,15 @@ export default function ProjectDetailPage() {
       </div>
     );
   }
+
+  // Manager sees scoped hours as the planned target; admin sees the internal quote.
+  const plannedHours = canSeeFinancials
+    ? project.quoted_hours ?? null
+    : scopedHours > 0
+      ? scopedHours
+      : null;
+  const hoursUsedPct =
+    plannedHours && plannedHours > 0 ? ((totals?.labourHours ?? 0) / plannedHours) * 100 : null;
 
   return (
     <div className="space-y-6">
@@ -293,7 +310,7 @@ export default function ProjectDetailPage() {
           <StatCard
             label="Hours logged"
             value={formatHours(totals.labourHours)}
-            sub={project.quoted_hours ? `of ${formatHours(project.quoted_hours)} quoted` : undefined}
+            sub={scopedHours > 0 ? `of ${formatHours(scopedHours)} scoped` : undefined}
             icon={<TrendingUp className="h-4 w-4" />}
           />
         </section>
@@ -348,22 +365,22 @@ export default function ProjectDetailPage() {
       />
 
       {/* Progress bars */}
-      {totals && (project.quoted_hours || (canSeeFinancials && project.materials_budget)) && (
+      {totals && (plannedHours != null || (canSeeFinancials && project.materials_budget)) && (
         <div className="space-y-3 rounded-md border bg-card p-4">
-          {project.quoted_hours != null && (
+          {plannedHours != null && (
             <div className="space-y-1">
               <div className="flex items-center justify-between text-sm">
                 <span>Hours used</span>
                 <span className="font-semibold tabular-nums">
-                  {totals.hoursUsedPct?.toFixed(0)}%
+                  {hoursUsedPct?.toFixed(0)}%
                 </span>
               </div>
               <Progress
-                value={totals.hoursUsedPct ?? 0}
+                value={hoursUsedPct ?? 0}
                 variant={
-                  (totals.hoursUsedPct ?? 0) > 100
+                  (hoursUsedPct ?? 0) > 100
                     ? 'danger'
-                    : (totals.hoursUsedPct ?? 0) > 80
+                    : (hoursUsedPct ?? 0) > 80
                       ? 'warning'
                       : 'default'
                 }
@@ -390,11 +407,11 @@ export default function ProjectDetailPage() {
               />
             </div>
           )}
-          {(totals.hoursUsedPct ?? 0) > 80 && (
+          {(hoursUsedPct ?? 0) > 80 && (
             <div className="flex items-start gap-2 rounded bg-warning/10 p-2 text-xs text-warning">
               <AlertTriangle className="mt-0.5 h-3.5 w-3.5" />
               <span>
-                At {totals.hoursUsedPct?.toFixed(0)}% of quoted hours.
+                At {hoursUsedPct?.toFixed(0)}% of {canSeeFinancials ? 'quoted' : 'scoped'} hours.
                 {canSeeFinancials ? ' Review scope with Alex.' : ''}
               </span>
             </div>
