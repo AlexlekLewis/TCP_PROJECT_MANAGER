@@ -170,13 +170,15 @@ export interface AuditLogRow {
 /**
  * Variation = scope added to a project mid-job (client asked for X on top of
  * the quote). Only `approved` variations roll into the project total quote.
- * Admin-only at the DB layer.
+ * The manager (Gavin) can log a variation on-site by description only —
+ * `amount` is left null ("unpriced") until the admin prices it. Pricing and
+ * approval stay admin-only.
  */
 export interface ProjectVariation {
   id: UUID;
   project_id: UUID;
   description: string;
-  amount: number;
+  amount: number | null;
   status: VariationStatus;
   notes: string | null;
   created_at: ISODateTime;

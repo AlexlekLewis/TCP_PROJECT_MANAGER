@@ -39,6 +39,7 @@ import { useMaterialEntriesForProject } from '@/hooks/useMaterialEntries';
 import {
   useCreateVariation,
   useProjectVariations,
+  useUpdateVariation,
   useUpdateVariationStatus,
 } from '@/hooks/useProjectVariations';
 import {
@@ -75,6 +76,7 @@ export default function ProjectDetailPage() {
   const del = useDeleteProject();
   const updateProject = useUpdateProject();
   const createVariation = useCreateVariation();
+  const updateVariation = useUpdateVariation();
   const updateVariationStatus = useUpdateVariationStatus();
   const createScope = useCreateScope();
   const updateScope = useUpdateScope();
@@ -297,42 +299,53 @@ export default function ProjectDetailPage() {
         </section>
       )}
 
-      {/* Scopes — multi-area projects with separate priced sections. Admin only. */}
-      {role === 'admin' && (
-        <ScopesSection
-          projectId={project.id}
-          scopes={scopes}
-          timeEntries={timeEntries}
-          materialEntries={materials}
-          workers={workers}
-          onCreate={async (input) => {
-            await createScope.mutateAsync(input);
-          }}
-          onUpdate={async (id, patch) => {
-            await updateScope.mutateAsync({ id, patch });
-          }}
-          onDelete={async (id) => {
-            await deleteScope.mutateAsync(id);
-          }}
-        />
-      )}
+      {/* Scopes — multi-area projects with separate priced sections. Both
+          roles can add/edit; the manager sees hours only (no pricing). */}
+      <ScopesSection
+        projectId={project.id}
+        scopes={scopes}
+        timeEntries={timeEntries}
+        materialEntries={materials}
+        workers={workers}
+        onCreate={async (input) => {
+          await createScope.mutateAsync(input);
+        }}
+        onUpdate={async (id, patch) => {
+          await updateScope.mutateAsync({ id, patch });
+        }}
+        onDelete={async (id) => {
+          await deleteScope.mutateAsync(id);
+        }}
+      />
 
-      {/* Variations (admin only). Approved variations roll into total quote + margin. */}
-      {role === 'admin' && (
-        <VariationsSection
-          projectId={project.id}
-          variations={variations}
-          onAdd={async (input) => {
-            await createVariation.mutateAsync({ project_id: project.id, ...input });
-            toast.success('Variation added');
-          }}
-          onSetStatus={async (id, status) => {
-            await updateVariationStatus.mutateAsync({ id, status });
-            toast.success(`Variation ${status}`);
-          }}
-          approvedTotal={totals?.approvedVariations ?? 0}
-        />
-      )}
+      {/* Variations. Both roles can log one; the manager logs it unpriced for
+          Alex to price + approve. Approved variations roll into total quote. */}
+      <VariationsSection
+        projectId={project.id}
+        variations={variations}
+        canSeeFinancials={canSeeFinancials}
+        onAdd={async (input) => {
+          await createVariation.mutateAsync({ project_id: project.id, ...input });
+          toast.success('Variation added');
+        }}
+        onUpdate={
+          canSeeFinancials
+            ? async (id, patch) => {
+                await updateVariation.mutateAsync({ id, patch });
+                toast.success('Variation updated');
+              }
+            : undefined
+        }
+        onSetStatus={
+          canSeeFinancials
+            ? async (id, status) => {
+                await updateVariationStatus.mutateAsync({ id, status });
+                toast.success(`Variation ${status}`);
+              }
+            : undefined
+        }
+        approvedTotal={totals?.approvedVariations ?? 0}
+      />
 
       {/* Progress bars */}
       {totals && (project.quoted_hours || (canSeeFinancials && project.materials_budget)) && (

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { addDays, format, parseISO } from 'date-fns';
-import { AlertTriangle, Copy, Plus, Trash2 } from 'lucide-react';
+import { AlertTriangle, Copy, Pencil, Plus, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import {
   Dialog,
@@ -20,8 +20,14 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
-import type { Project, Worker } from '@/types/db';
-import { useBatchCreateTimeEntries, useCreateTimeEntry, useDeleteTimeEntry, useTimeEntriesForWeek } from '@/hooks/useTimeEntries';
+import type { Project, TimeEntry, Worker } from '@/types/db';
+import {
+  useBatchCreateTimeEntries,
+  useCreateTimeEntry,
+  useDeleteTimeEntry,
+  useTimeEntriesForWeek,
+  useUpdateTimeEntry,
+} from '@/hooks/useTimeEntries';
 import { useCreateMaterialEntry, useMaterialEntries, useDeleteMaterialEntry } from '@/hooks/useMaterialEntries';
 import { formatCurrency } from '@/lib/currency';
 import { validateHours } from '@/lib/hours';
@@ -98,6 +104,7 @@ function DayEntryBody({
   const createTE = useCreateTimeEntry();
   const batchCreateTE = useBatchCreateTimeEntries();
   const deleteTE = useDeleteTimeEntry();
+  const updateTE = useUpdateTimeEntry();
   const createME = useCreateMaterialEntry();
   const deleteME = useDeleteMaterialEntry();
   const canSeeFinancials = useCanSeeFinancials();
@@ -119,6 +126,11 @@ function DayEntryBody({
   const [hours, setHours] = useState<string>('');
   const [task, setTask] = useState<string>('');
   const [notes, setNotes] = useState<string>('');
+
+  // When set, the "Add time" form is in edit mode for this entry id — used to
+  // correct a mis-logged worker / project / hours rather than add a new row.
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const timeFormRef = useRef<HTMLFieldSetElement | null>(null);
 
   // Scopes for the currently-picked project (time entry). Empty array
   // when project has no scopes — picker is then hidden entirely.
@@ -194,7 +206,8 @@ function DayEntryBody({
     const cap = project?.daily_hours_warning;
     if (cap == null) return null;
     const already = dayTE
-      .filter((e) => e.worker_id === workerId && e.project_id === projectId)
+      // Exclude the row being edited so a correction doesn't double-count it.
+      .filter((e) => e.worker_id === workerId && e.project_id === projectId && e.id !== editingId)
       .reduce((s, e) => s + Number(e.hours), 0);
     const total = already + h;
     if (total > cap) {
@@ -203,7 +216,7 @@ function DayEntryBody({
       } today — over the ${cap}h soft cap.`;
     }
     return null;
-  }, [workerId, projectId, hours, dayTE, projectById, workerById]);
+  }, [workerId, projectId, hours, dayTE, projectById, workerById, editingId]);
 
   // Auto-focus the Hours input once both worker + project are picked. Saves
   // a tap on phones where the worker comes from a chip and project from a tap.
@@ -225,6 +238,32 @@ function DayEntryBody({
     setMatScopeId('');
   };
 
+  // Load an existing entry into the form to correct it. Scrolls the form into
+  // view inside the scrollable dialog so the fields are visible on a phone.
+  const startEdit = (e: TimeEntry) => {
+    setEditingId(e.id);
+    setWorkerId(e.worker_id);
+    setProjectId(e.project_id);
+    setScopeId(e.scope_id ?? '');
+    setHours(String(Number(e.hours)));
+    setTask(e.task ?? '');
+    setNotes(e.notes ?? '');
+    requestAnimationFrame(() => {
+      timeFormRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      hoursInputRef.current?.focus();
+    });
+  };
+
+  const cancelEdit = () => {
+    setEditingId(null);
+    setWorkerId('');
+    setProjectId('');
+    setScopeId('');
+    setHours('');
+    setTask('');
+    setNotes('');
+  };
+
   const submitTime = async () => {
     if (!workerId || !projectId || !hours) return;
     const h = Number.parseFloat(hours);
@@ -234,6 +273,26 @@ function DayEntryBody({
       return;
     }
     if (v.warning) toast.warning(v.warning);
+
+    if (editingId) {
+      // Correcting an existing entry.
+      await updateTE.mutateAsync({
+        id: editingId,
+        patch: {
+          worker_id: workerId,
+          project_id: projectId,
+          scope_id: scopeId || null,
+          hours: h,
+          task: task || null,
+          notes: notes || null,
+        },
+      });
+      if (previewWarning) toast.warning(previewWarning);
+      else toast.success('Entry updated');
+      cancelEdit();
+      return;
+    }
+
     await createTE.mutateAsync({
       entry_date: date,
       worker_id: workerId,
@@ -247,6 +306,7 @@ function DayEntryBody({
     // Soft-cap flag — informational, doesn't block (and the entry's already saved)
     if (previewWarning) toast.warning(previewWarning);
     else toast.success('Time entry added');
+    // Keep worker + project for fast multi-entry; clear the rest.
     setHours('');
     setTask('');
     setNotes('');
@@ -377,15 +437,26 @@ function DayEntryBody({
                 </div>
                 <span className="tabular-nums font-semibold">{Number(e.hours).toFixed(1)}h</span>
                 {!locked && (
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => {
-                      deleteTE.mutate(e.id);
-                    }}
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
+                  <>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      aria-label="Edit entry"
+                      onClick={() => startEdit(e)}
+                    >
+                      <Pencil className="h-4 w-4" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      aria-label="Delete entry"
+                      onClick={() => {
+                        deleteTE.mutate(e.id);
+                      }}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </>
                 )}
               </div>
               );
@@ -441,11 +512,11 @@ function DayEntryBody({
         </div>
       )}
 
-      {/* Add time entry */}
+      {/* Add / edit time entry */}
       {!locked && (
-        <fieldset className="space-y-3 rounded-md border p-3">
+        <fieldset ref={timeFormRef} className="space-y-3 rounded-md border p-3">
           <legend className="px-1 text-xs font-medium uppercase text-muted-foreground">
-            Add time
+            {editingId ? 'Edit time' : 'Add time'}
           </legend>
           <div className="grid gap-3 md:grid-cols-2">
             <div className="space-y-1.5">
@@ -570,9 +641,22 @@ function DayEntryBody({
               </button>
             ))}
           </div>
-          <Button onClick={submitTime} disabled={!workerId || !projectId || !hours}>
-            <Plus className="h-4 w-4" /> Add time
-          </Button>
+          <div className="flex gap-2">
+            <Button onClick={submitTime} disabled={!workerId || !projectId || !hours}>
+              {editingId ? (
+                'Save changes'
+              ) : (
+                <>
+                  <Plus className="h-4 w-4" /> Add time
+                </>
+              )}
+            </Button>
+            {editingId && (
+              <Button variant="ghost" onClick={cancelEdit}>
+                Cancel
+              </Button>
+            )}
+          </div>
         </fieldset>
       )}
 

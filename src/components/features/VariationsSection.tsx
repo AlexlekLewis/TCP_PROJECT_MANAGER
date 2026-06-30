@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Check, Plus, X } from 'lucide-react';
+import { Check, Pencil, Plus, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -17,26 +17,43 @@ import { formatCurrency } from '@/lib/currency';
 import { toast } from 'sonner';
 import type { ProjectVariation, VariationStatus } from '@/types/db';
 
+interface AddInput {
+  description: string;
+  amount: number | null;
+  notes: string | null;
+  status: VariationStatus;
+}
+
 interface Props {
   projectId: string;
   variations: ProjectVariation[];
   approvedTotal: number;
-  onAdd: (input: { description: string; amount: number; notes: string | null; status: VariationStatus }) => Promise<void>;
-  onSetStatus: (id: string, status: VariationStatus) => Promise<void>;
+  /** Admin sees + sets the dollar amount and can approve/reject. Manager
+   *  (Gavin) logs the extra scope by description only and never sees money. */
+  canSeeFinancials: boolean;
+  onAdd: (input: AddInput) => Promise<void>;
+  onUpdate?: (
+    id: string,
+    patch: { description: string; amount: number | null; notes: string | null },
+  ) => Promise<void>;
+  onSetStatus?: (id: string, status: VariationStatus) => Promise<void>;
 }
 
 /**
  * Variations = extra scope a client signs off mid-job ("while you're here,
  * can you do the bathroom too?"). Only `approved` rolls into the quote.
- * Admin-only at the DB layer; this component never renders for manager.
+ * Both roles can add one; pricing and approval are admin-only.
  */
 export function VariationsSection({
   variations,
   approvedTotal,
+  canSeeFinancials,
   onAdd,
+  onUpdate,
   onSetStatus,
 }: Props) {
   const [addOpen, setAddOpen] = useState(false);
+  const [editing, setEditing] = useState<ProjectVariation | null>(null);
   const sorted = [...variations].sort((a, b) =>
     a.created_at < b.created_at ? 1 : -1,
   );
@@ -45,7 +62,7 @@ export function VariationsSection({
     <section className="space-y-2">
       <div className="flex items-center gap-2">
         <h2 className="text-sm font-semibold">Variations</h2>
-        {approvedTotal > 0 && (
+        {canSeeFinancials && approvedTotal > 0 && (
           <Badge variant="secondary" className="font-mono">
             +{formatCurrency(approvedTotal, { whole: true })} approved
           </Badge>
@@ -79,29 +96,51 @@ export function VariationsSection({
                   </p>
                 </div>
                 <div className="text-right">
-                  <p className="font-semibold tabular-nums">
-                    {formatCurrency(v.amount, { whole: true })}
-                  </p>
+                  {canSeeFinancials &&
+                    (v.amount != null ? (
+                      <p className="font-semibold tabular-nums">
+                        {formatCurrency(v.amount, { whole: true })}
+                      </p>
+                    ) : (
+                      <p className="text-xs font-medium uppercase tracking-wide text-amber-700 dark:text-amber-300">
+                        Unpriced
+                      </p>
+                    ))}
                   <StatusBadge status={v.status} />
                 </div>
-                {v.status === 'pending' && (
+                {/* Admin: price/edit + approve/reject. Manager sees neither. */}
+                {canSeeFinancials && (
                   <div className="flex flex-col gap-1">
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="h-7 border-emerald-300 text-emerald-700 hover:bg-emerald-50 dark:border-emerald-700 dark:text-emerald-300 dark:hover:bg-emerald-950"
-                      onClick={() => onSetStatus(v.id, 'approved')}
-                    >
-                      <Check className="h-3 w-3" /> Approve
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="h-7"
-                      onClick={() => onSetStatus(v.id, 'rejected')}
-                    >
-                      <X className="h-3 w-3" /> Reject
-                    </Button>
+                    {onUpdate && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-7"
+                        onClick={() => setEditing(v)}
+                      >
+                        <Pencil className="h-3 w-3" /> {v.amount == null ? 'Price' : 'Edit'}
+                      </Button>
+                    )}
+                    {v.status === 'pending' && onSetStatus && (
+                      <>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-7 border-emerald-300 text-emerald-700 hover:bg-emerald-50 dark:border-emerald-700 dark:text-emerald-300 dark:hover:bg-emerald-950"
+                          onClick={() => onSetStatus(v.id, 'approved')}
+                        >
+                          <Check className="h-3 w-3" /> Approve
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-7"
+                          onClick={() => onSetStatus(v.id, 'rejected')}
+                        >
+                          <X className="h-3 w-3" /> Reject
+                        </Button>
+                      </>
+                    )}
                   </div>
                 )}
               </div>
@@ -110,12 +149,33 @@ export function VariationsSection({
         </Card>
       )}
 
-      <AddVariationDialog
+      {/* Add — both roles. Manager form is description + notes only. */}
+      <VariationDialog
         open={addOpen}
         onClose={() => setAddOpen(false)}
+        canSeeFinancials={canSeeFinancials}
         onSubmit={async (input) => {
           await onAdd(input);
           setAddOpen(false);
+        }}
+      />
+
+      {/* Edit / price — admin only. */}
+      <VariationDialog
+        key={editing?.id ?? 'edit'}
+        open={!!editing}
+        onClose={() => setEditing(null)}
+        canSeeFinancials
+        variation={editing ?? undefined}
+        onSubmit={async (input) => {
+          if (editing && onUpdate) {
+            await onUpdate(editing.id, {
+              description: input.description,
+              amount: input.amount,
+              notes: input.notes,
+            });
+            setEditing(null);
+          }
         }}
       />
     </section>
@@ -144,24 +204,34 @@ function StatusBadge({ status }: { status: VariationStatus }) {
   );
 }
 
-function AddVariationDialog({
+function VariationDialog({
   open,
   onClose,
+  canSeeFinancials,
+  variation,
   onSubmit,
 }: {
   open: boolean;
   onClose: () => void;
-  onSubmit: (input: { description: string; amount: number; notes: string | null; status: VariationStatus }) => Promise<void>;
+  canSeeFinancials: boolean;
+  variation?: ProjectVariation;
+  onSubmit: (input: AddInput) => Promise<void>;
 }) {
-  const [description, setDescription] = useState('');
-  const [amount, setAmount] = useState('');
-  const [notes, setNotes] = useState('');
+  const isEdit = !!variation;
+  const [description, setDescription] = useState(variation?.description ?? '');
+  const [amount, setAmount] = useState(variation?.amount != null ? String(variation.amount) : '');
+  const [notes, setNotes] = useState(variation?.notes ?? '');
   const [approvedAlready, setApprovedAlready] = useState(false);
 
   const submit = async () => {
-    const amt = Number.parseFloat(amount);
-    if (!description.trim() || !amt) {
-      toast.error('Description and amount required');
+    if (!description.trim()) {
+      toast.error('Description is required');
+      return;
+    }
+    // Manager: never sets a dollar amount — logs it for Alex to price.
+    const amt = canSeeFinancials && amount ? Number.parseFloat(amount) : null;
+    if (amt != null && (!Number.isFinite(amt) || amt === 0)) {
+      toast.error('Enter a non-zero amount, or leave it blank to price later');
       return;
     }
     await onSubmit({
@@ -170,17 +240,19 @@ function AddVariationDialog({
       notes: notes.trim() || null,
       status: approvedAlready ? 'approved' : 'pending',
     });
-    setDescription('');
-    setAmount('');
-    setNotes('');
-    setApprovedAlready(false);
+    if (!isEdit) {
+      setDescription('');
+      setAmount('');
+      setNotes('');
+      setApprovedAlready(false);
+    }
   };
 
   return (
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Add variation</DialogTitle>
+          <DialogTitle>{isEdit ? 'Edit variation' : 'Add variation'}</DialogTitle>
         </DialogHeader>
         <div className="grid gap-3">
           <div className="space-y-1.5">
@@ -191,39 +263,51 @@ function AddVariationDialog({
               onChange={(e) => setDescription(e.target.value)}
             />
           </div>
-          <div className="space-y-1.5">
-            <Label>Amount $ *</Label>
-            <Input
-              type="number"
-              step="50"
-              placeholder="2500"
-              value={amount}
-              onChange={(e) => setAmount(e.target.value)}
-            />
-          </div>
+          {canSeeFinancials ? (
+            <div className="space-y-1.5">
+              <Label>Amount $ (optional — leave blank to price later)</Label>
+              <Input
+                type="number"
+                step="50"
+                placeholder="2500"
+                value={amount}
+                onChange={(e) => setAmount(e.target.value)}
+              />
+            </div>
+          ) : (
+            <p className="rounded-md bg-secondary/60 px-3 py-2 text-xs text-muted-foreground">
+              Alex will price and approve this. Just describe the extra work and add any notes.
+            </p>
+          )}
           <div className="space-y-1.5">
             <Label>Notes</Label>
             <Textarea
               rows={2}
-              placeholder="Optional: who approved, date confirmed, etc."
+              placeholder={
+                canSeeFinancials
+                  ? 'Optional: who approved, date confirmed, etc.'
+                  : 'Optional: who asked, where, any detail'
+              }
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
             />
           </div>
-          <label className="flex items-center gap-2 text-sm">
-            <input
-              type="checkbox"
-              checked={approvedAlready}
-              onChange={(e) => setApprovedAlready(e.target.checked)}
-            />
-            Client has already approved — mark approved immediately
-          </label>
+          {canSeeFinancials && !isEdit && (
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={approvedAlready}
+                onChange={(e) => setApprovedAlready(e.target.checked)}
+              />
+              Client has already approved — mark approved immediately
+            </label>
+          )}
         </div>
         <DialogFooter>
           <Button variant="ghost" onClick={onClose}>
             Cancel
           </Button>
-          <Button onClick={submit}>Add</Button>
+          <Button onClick={submit}>{isEdit ? 'Save' : 'Add'}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

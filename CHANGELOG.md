@@ -6,6 +6,29 @@ Format: one section per session, newest on top. Each entry: what changed, why, f
 
 ---
 
+## 2026-06-12 (manager powers) — Gavin can add scopes + variations, and edit/remove worker hours
+
+Alex's ask: "I need Gav to be able to add variations and scopes. And he needs to be able to edit worker hours and remove worker hours if he makes a mistake on a project." Decision (confirmed with Alex): **keep Gavin $-blind** — he gets the operational controls without ever seeing or setting money. See [ADR 005](docs/decisions/005-manager-scopes-variations.md).
+
+**Scopes — manager add + edit (not delete)** ([ScopesSection.tsx](src/components/features/ScopesSection.tsx), [ProjectDetail.tsx](src/pages/ProjectDetail.tsx))
+- ScopesSection now renders for both roles (was `role === 'admin'` only). The scope add/edit dialog hides the three $ fields for the manager and shows a single "Planned hours" field instead; existing prices are preserved untouched on a manager save.
+- Scope **Delete** stays admin-only (removing a priced scope changes the project quote rollup) — the menu item is hidden for the manager.
+
+**Variations — manager logs unpriced, admin prices + approves** ([VariationsSection.tsx](src/components/features/VariationsSection.tsx), [useProjectVariations.ts](src/hooks/useProjectVariations.ts))
+- VariationsSection renders for both roles. Manager form is description + notes only ("Alex will price and approve this"); the variation lands `pending` with `amount = null`.
+- `ProjectVariation.amount` is now `number | null` ("unpriced"). `computeProjectTotals` treats a null amount as $0 in the approved-variation rollup.
+- Admin side gained a **Price/Edit** action (new `useUpdateVariation` hook + `updateVariation` demo-store method) so Alex can set the amount on what Gav logged before approving. Admin still sees the amount (or "Unpriced") and Approve/Reject; the manager sees neither money nor approve controls.
+
+**Worker hours — manager edit + remove** ([DayEntryDialog.tsx](src/components/features/DayEntryDialog.tsx))
+- Each time-entry row gained an **edit** (pencil) button alongside the existing delete; both are gated only by the week-lock (delete already worked, edit was missing).
+- Edit reuses the existing in-dialog "Add time" form (switches to "Edit time" with Save/Cancel, pre-filled). Originally built as a nested Radix `<Dialog>`, but a dialog-inside-a-dialog would not close (verified live — Save, Cancel and Esc all failed to dismiss it); the inline-form approach sidesteps nested-dialog issues entirely and is better on a phone.
+
+**DB (go-live only; demo mode is unaffected)** ([20260612000001_manager_scopes_variations.sql](supabase/migrations/20260612000001_manager_scopes_variations.sql))
+- `project_scopes`: manager INSERT + UPDATE policies + `enforce_manager_scope_economics()` trigger forcing the $ columns null on manager insert and preserving the admin's values on manager update.
+- `project_variations`: `amount` made nullable (check → `amount is null or amount <> 0`); manager INSERT policy + `enforce_manager_variation_economics()` trigger forcing unpriced/pending; new `project_variations_visible` masked view (amount + approver hidden from manager), with base-table SELECT revoked — mirrors the `project_scopes_visible` / `workers_visible` pattern. Time-entry edit/delete needed no DB change (RLS already allows the manager to write any entry in an unlocked week).
+
+**Verification** — typecheck + lint (0 errors) + 59/59 vitest + production build all clean. Drove the running app as Gavin and Alex via the preview harness: confirmed Gav adds an hours-only scope + a description-only variation with no `$` leak; Alex then sees the unpriced variation, prices it to $850 and the Approve flow works; and a time entry edits 4h→6h inline with the form resetting afterward.
+
 ## 2026-05-24 (scopes) — Multi-area projects: split one project into priced scopes
 
 Alex's ask: "Park Street has three different quotes (exterior, interior, studio) but it's still the same project." Modelled as **project scopes** — child rows under a project, each with its own quote/hours/budget/target. Entries can optionally tag a scope; project total quote rolls up = Σ scope quotes when scopes exist.

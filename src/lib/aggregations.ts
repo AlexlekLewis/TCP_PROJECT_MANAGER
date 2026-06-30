@@ -72,7 +72,7 @@ export function computeProjectTotals(
   // been signed off by the client gets added to what we'll bill.
   const approvedVariations = variations
     .filter((v) => v.project_id === project.id && v.status === 'approved')
-    .reduce((s, v) => s + Number(v.amount), 0);
+    .reduce((s, v) => s + Number(v.amount ?? 0), 0);
 
   // Base quote = Σ scope quoted_prices if scopes exist (multi-area project),
   // else the legacy project.quoted_price field. This means once Alex

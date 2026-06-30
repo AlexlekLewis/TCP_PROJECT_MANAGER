@@ -171,6 +171,13 @@ class DemoStore {
     this.notify();
     return row;
   }
+  updateVariation(
+    id: string,
+    patch: Partial<Pick<ProjectVariation, 'description' | 'amount' | 'notes'>>,
+  ) {
+    this.variations = this.variations.map((v) => (v.id === id ? { ...v, ...patch } : v));
+    this.notify();
+  }
   updateVariationStatus(id: string, status: VariationStatus) {
     this.variations = this.variations.map((v) =>
       v.id === id

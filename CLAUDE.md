@@ -18,6 +18,7 @@ Mobile-first internal tool for a 4-person painting crew: log daily labour hours 
 - [ADR 002 — Schema + RLS](docs/decisions/002-schema-rls.md)
 - [ADR 003 — Claude voice parse](docs/decisions/003-claude-voice-parse.md)
 - [ADR 004 — Deployment topology](docs/decisions/004-deployment.md)
+- [ADR 005 — Manager scopes/variations + hours editing](docs/decisions/005-manager-scopes-variations.md)
 - [CHANGELOG](CHANGELOG.md) — append-only session log
 
 ## Stack (shipped)
@@ -36,10 +37,13 @@ Mobile-first internal tool for a 4-person painting crew: log daily labour hours 
 
 Tables: `profiles`, `workers`, `projects`, `time_entries`, `material_entries`, `voice_logs`, `week_locks`, `audit_log`, `settings`. Full schema + RLS in [supabase/migrations/](supabase/migrations).
 
+Plus `project_scopes` + `project_variations` (child tables under `projects`).
+
 Key invariants enforced by RLS / triggers (not UI):
 - `time_entries.hours` CHECK between 0 and 14 (inclusive).
-- Manager cannot INSERT/UPDATE/DELETE entries inside a locked week.
+- Manager cannot INSERT/UPDATE/DELETE entries inside a locked week. In an *unlocked* week the manager may edit + delete any entry (used by the on-site "fix a mistake" flow).
 - Admin writes inside locked weeks are allowed but write to `audit_log` via trigger.
+- Manager (Gavin) is financially blind: he can add scopes (hours only) + edit them, and log unpriced `pending` variations, but the $ columns are forced null/preserved by triggers and masked on read (`*_visible` views). Scope delete, variation pricing + approval are admin-only. See [ADR 005](docs/decisions/005-manager-scopes-variations.md).
 - Service-role key never touches user-input code paths.
 
 ## Commands

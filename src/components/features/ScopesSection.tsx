@@ -107,16 +107,19 @@ export function ScopesSection({
         open={creating}
         onClose={() => setCreating(false)}
         nextOrderIndex={scopes.length}
+        canSeeFinancials={canSeeFinancials}
         onSubmit={async (input) => {
           await onCreate({ ...input, project_id: projectId });
           setCreating(false);
         }}
       />
       <ScopeDialog
+        key={editing?.id ?? 'edit'}
         open={!!editing}
         onClose={() => setEditing(null)}
         scope={editing ?? undefined}
         nextOrderIndex={editing?.order_index ?? 0}
+        canSeeFinancials={canSeeFinancials}
         onSubmit={async (patch) => {
           if (editing) {
             await onUpdate(editing.id, patch);
@@ -214,9 +217,13 @@ function ScopeCard({
               <DropdownMenuItem onSelect={onEdit}>
                 <Pencil className="h-4 w-4" /> Edit
               </DropdownMenuItem>
-              <DropdownMenuItem destructive onSelect={onDelete}>
-                <Trash2 className="h-4 w-4" /> Delete
-              </DropdownMenuItem>
+              {/* Delete stays admin-only: removing a scope changes the project
+                  quote rollup. Manager (Gavin) can add + edit, not delete. */}
+              {canSeeFinancials && (
+                <DropdownMenuItem destructive onSelect={onDelete}>
+                  <Trash2 className="h-4 w-4" /> Delete
+                </DropdownMenuItem>
+              )}
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
@@ -283,12 +290,16 @@ function ScopeDialog({
   onClose,
   scope,
   nextOrderIndex,
+  canSeeFinancials,
   onSubmit,
 }: {
   open: boolean;
   onClose: () => void;
   scope?: ProjectScope;
   nextOrderIndex: number;
+  /** Manager (Gavin) is $-blind: pricing fields are hidden and any existing
+   *  values are preserved unchanged on save. */
+  canSeeFinancials: boolean;
   onSubmit: (input: Omit<ProjectScope, 'id' | 'project_id' | 'created_at' | 'updated_at'>) => Promise<void>;
 }) {
   const [name, setName] = useState(scope?.name ?? '');
@@ -343,18 +354,54 @@ function ScopeDialog({
               onChange={(e) => setName(e.target.value)}
             />
           </div>
-          <div className="grid grid-cols-2 gap-3">
+          {canSeeFinancials ? (
+            <>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <Label>Quote $</Label>
+                  <Input
+                    type="number"
+                    step="100"
+                    value={quotedPrice}
+                    onChange={(e) => setQuotedPrice(e.target.value)}
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Quoted hours</Label>
+                  <Input
+                    type="number"
+                    step="1"
+                    value={quotedHours}
+                    onChange={(e) => setQuotedHours(e.target.value)}
+                  />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <Label>Materials budget $</Label>
+                  <Input
+                    type="number"
+                    step="50"
+                    value={materialsBudget}
+                    onChange={(e) => setMaterialsBudget(e.target.value)}
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Target profit $</Label>
+                  <Input
+                    type="number"
+                    step="100"
+                    value={targetProfit}
+                    onChange={(e) => setTargetProfit(e.target.value)}
+                  />
+                </div>
+              </div>
+            </>
+          ) : (
+            // Manager: hours only. Pricing (quote / materials budget / target)
+            // stays Alex's job and is never shown here.
             <div className="space-y-1.5">
-              <Label>Quote $</Label>
-              <Input
-                type="number"
-                step="100"
-                value={quotedPrice}
-                onChange={(e) => setQuotedPrice(e.target.value)}
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label>Quoted hours</Label>
+              <Label>Planned hours (optional)</Label>
               <Input
                 type="number"
                 step="1"
@@ -362,27 +409,7 @@ function ScopeDialog({
                 onChange={(e) => setQuotedHours(e.target.value)}
               />
             </div>
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <Label>Materials budget $</Label>
-              <Input
-                type="number"
-                step="50"
-                value={materialsBudget}
-                onChange={(e) => setMaterialsBudget(e.target.value)}
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label>Target profit $</Label>
-              <Input
-                type="number"
-                step="100"
-                value={targetProfit}
-                onChange={(e) => setTargetProfit(e.target.value)}
-              />
-            </div>
-          </div>
+          )}
           <div className="space-y-1.5">
             <Label>Status</Label>
             <select
