@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   computeProjectTotals,
   computeScopeTotals,
+  computeTaskBenchmarks,
   computeWeeklyPnL,
   computeWorkerWeek,
 } from './aggregations';
@@ -229,5 +230,79 @@ describe('computeWeeklyPnL — admin weekly P&L', () => {
     const onlyJerry: TimeEntry[] = [te[0]];
     const p = computeWeeklyPnL(onlyJerry, [], workers);
     expect(p.fixedWeeklyWages).toBe(0);
+  });
+});
+
+describe('computeTaskBenchmarks — how long tasks generally take', () => {
+  const mk = (id: string, hours: number, task: string | null): TimeEntry => ({
+    id,
+    entry_date: '2026-04-20',
+    worker_id: 'w1',
+    project_id: 'p1',
+    hours,
+    task,
+    notes: null,
+    scope_id: null,
+    created_by: 'u',
+    ai_source_id: null,
+    created_at: now,
+    updated_at: now,
+  });
+
+  it('groups by task and reports count/total/avg/min/max', () => {
+    const rows = computeTaskBenchmarks([
+      mk('a', 2, 'Sanding windows'),
+      mk('b', 4, 'Sanding windows'),
+      mk('c', 3, 'Sanding windows'),
+    ]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      task: 'Sanding windows',
+      count: 3,
+      totalHours: 9,
+      avgHours: 3,
+      minHours: 2,
+      maxHours: 4,
+    });
+  });
+
+  it('folds case + plural variants into one task, keeping the most-used spelling', () => {
+    const rows = computeTaskBenchmarks([
+      mk('a', 2, 'Sanding windows'),
+      mk('b', 3, 'Sanding windows'),
+      mk('c', 2.5, 'sanding window'),
+    ]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].task).toBe('Sanding windows'); // modal spelling
+    expect(rows[0].count).toBe(3);
+  });
+
+  it('skips entries with no task label', () => {
+    const rows = computeTaskBenchmarks([
+      mk('a', 5, null),
+      mk('b', 5, '   '),
+      mk('c', 2, 'Gap filling skirts'),
+    ]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].task).toBe('Gap filling skirts');
+  });
+
+  it('sorts by sample size (count) descending', () => {
+    const rows = computeTaskBenchmarks([
+      mk('a', 1, 'Ceilings'),
+      mk('b', 1, 'Ceilings'),
+      mk('c', 1, 'Trims'),
+    ]);
+    expect(rows.map((r) => r.task)).toEqual(['Ceilings', 'Trims']);
+  });
+
+  it('breaks count ties by total hours (higher first)', () => {
+    const rows = computeTaskBenchmarks([
+      mk('a', 2, 'Ceilings'),
+      mk('b', 3, 'Ceilings'), // count 2, total 5
+      mk('c', 1, 'Trims'),
+      mk('d', 1, 'Trims'), // count 2, total 2
+    ]);
+    expect(rows.map((r) => r.task)).toEqual(['Ceilings', 'Trims']);
   });
 });

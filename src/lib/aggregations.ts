@@ -6,6 +6,7 @@ import type {
   TimeEntry,
   Worker,
 } from '@/types/db';
+import { cleanTask, mostFrequent, taskKey } from './tasks';
 
 // =============================================================================
 // Per-project totals (used on ProjectDetail + Reports breakdown)
@@ -300,6 +301,54 @@ export function computeScopeTotals(
     quoteProfit: quoteProfit != null ? round2(quoteProfit) : null,
     hoursUsedPct: hoursUsedPct != null ? round2(hoursUsedPct) : null,
   };
+}
+
+// =============================================================================
+// Task-time benchmarks (used on Reports → "Task times")
+// =============================================================================
+
+export interface TaskBenchmark {
+  /** Display label — the most-frequent spelling logged for this task. */
+  task: string;
+  /** How many time entries carry this task (the sample size). */
+  count: number;
+  totalHours: number;
+  avgHours: number;
+  minHours: number;
+  maxHours: number;
+}
+
+/**
+ * "How long does <task> generally take." Groups every time entry by a
+ * normalized task key (so "Sanding windows" / "sand window" fold together) and
+ * reports count + total/avg/min/max hours per task. Entries with no task label
+ * are skipped. Sorted by count desc — best-sampled tasks first.
+ */
+export function computeTaskBenchmarks(timeEntries: TimeEntry[]): TaskBenchmark[] {
+  const groups = new Map<string, { spellings: Map<string, number>; hours: number[] }>();
+  for (const e of timeEntries) {
+    const label = cleanTask(e.task);
+    if (!label) continue;
+    const key = taskKey(label);
+    if (!key) continue;
+    const g = groups.get(key) ?? { spellings: new Map<string, number>(), hours: [] };
+    g.spellings.set(label, (g.spellings.get(label) ?? 0) + 1);
+    g.hours.push(Number(e.hours));
+    groups.set(key, g);
+  }
+  const rows: TaskBenchmark[] = [];
+  for (const g of groups.values()) {
+    const total = g.hours.reduce((s, h) => s + h, 0);
+    rows.push({
+      task: mostFrequent(g.spellings),
+      count: g.hours.length,
+      totalHours: round2(total),
+      avgHours: round2(total / g.hours.length),
+      minHours: round2(Math.min(...g.hours)),
+      maxHours: round2(Math.max(...g.hours)),
+    });
+  }
+  return rows.sort((a, b) => b.count - a.count || b.totalHours - a.totalHours);
 }
 
 function round2(n: number): number {

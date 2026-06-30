@@ -158,6 +158,14 @@ export const DEMO_TIME_ENTRIES: TimeEntry[] = [
   mkTimeEntry('t8', 2, 'w-jerry', 'p-northcote', 8),
   mkTimeEntry('t9', 2, 'w-pierce', 'p-belmore', 8),
   mkTimeEntry('t10', 2, 'w-gavin', 'p-northcote', 6, 'Helped Jerry finish heritage section'),
+  // Recurring tasks across jobs — gives Reports → "Task times" real sample
+  // sizes. "sanding window" (t13) is a deliberate lower-case/singular variant
+  // that folds into "Sanding windows" to show the benchmark de-duplicates.
+  mkTimeEntry('t11', 0, 'w-pierce', 'p-northcote', 2.5, 'Office crack repairs', 'Sanding windows'),
+  mkTimeEntry('t12', 1, 'w-gavin', 'p-belmore', 3, null, 'Sanding windows'),
+  mkTimeEntry('t13', 2, 'w-jerry', 'p-preston', 2, null, 'sanding window'),
+  mkTimeEntry('t14', 1, 'w-pierce', 'p-northcote', 4, null, 'Gap filling skirts'),
+  mkTimeEntry('t15', 2, 'w-gavin', 'p-preston', 3.5, null, 'Gap filling skirts'),
 ];
 
 export const DEMO_MATERIAL_ENTRIES: MaterialEntry[] = [

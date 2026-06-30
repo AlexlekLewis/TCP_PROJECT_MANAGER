@@ -4,12 +4,12 @@ import { ChevronLeft, ChevronRight, Download, Lock, Unlock } from 'lucide-react'
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { useTimeEntriesForWeek } from '@/hooks/useTimeEntries';
+import { useAllTimeEntries, useTimeEntriesForWeek } from '@/hooks/useTimeEntries';
 import { useMaterialEntries } from '@/hooks/useMaterialEntries';
 import { useWorkers } from '@/hooks/useWorkers';
 import { useProjects } from '@/hooks/useProjects';
 import { useLockWeek, useUnlockWeek, useWeekLocks } from '@/hooks/useWeekLocks';
-import { computeWorkerWeek } from '@/lib/aggregations';
+import { computeTaskBenchmarks, computeWorkerWeek } from '@/lib/aggregations';
 import { formatCurrency } from '@/lib/currency';
 import { formatHours } from '@/lib/hours';
 import { toISODate, weekEnd, weekLabel, weekStart } from '@/lib/dates';
@@ -25,6 +25,9 @@ export default function ReportsPage() {
   const endIso = toISODate(weekEnd(anchor));
 
   const { data: entries = [] } = useTimeEntriesForWeek(anchor);
+  // Task benchmarks are cross-job + all-time, so they read every entry, not
+  // just this week's.
+  const { data: allEntries = [] } = useAllTimeEntries();
   const { data: allMaterials = [] } = useMaterialEntries();
   const { data: workers = [] } = useWorkers();
   const { data: projects = [] } = useProjects();
@@ -57,6 +60,8 @@ export default function ReportsPage() {
       })
       .filter((r) => r.hours > 0 || r.mats > 0);
   }, [entries, projects, materialsThisWeek, workers]);
+
+  const taskRows = useMemo(() => computeTaskBenchmarks(allEntries), [allEntries]);
 
   const weekTotalHours = entries.reduce((s, e) => s + Number(e.hours), 0);
   const weekTotalLabour = workerRows.reduce((s, w) => s + w.totalCost, 0);
@@ -96,6 +101,21 @@ export default function ReportsPage() {
     const csv = toCSV(rows, ['project', 'client', 'hours', 'labour_cost', 'material_cost', 'total']);
     downloadCSV(`projects-${startIso}.csv`, csv);
     toast.success('Projects CSV downloaded');
+  };
+
+  // Hours/counts only — no money — so the manager can export it too.
+  const exportTaskTimesCSV = () => {
+    const rows = taskRows.map((r) => ({
+      task: r.task,
+      logs: String(r.count),
+      avg_hours: r.avgHours.toFixed(2),
+      min_hours: r.minHours.toFixed(2),
+      max_hours: r.maxHours.toFixed(2),
+      total_hours: r.totalHours.toFixed(2),
+    }));
+    const csv = toCSV(rows, ['task', 'logs', 'avg_hours', 'min_hours', 'max_hours', 'total_hours']);
+    downloadCSV('task-times.csv', csv);
+    toast.success('Task times CSV downloaded');
   };
 
   return (
@@ -223,8 +243,66 @@ export default function ReportsPage() {
         </Card>
       </section>
 
+      {/* Task times — how long jobs generally take, across all projects and all
+          time. Hours + counts only (no money), so visible to both roles. Unlike
+          the rest of the page this is NOT week-anchored. */}
+      <section>
+        <div className="mb-2 flex items-baseline justify-between gap-2">
+          <h2 className="text-sm font-semibold">Task times</h2>
+          <span className="text-xs text-muted-foreground">all projects · all time</span>
+        </div>
+        <Card>
+          <CardContent className="p-0">
+            {taskRows.length === 0 ? (
+              <p className="px-4 py-8 text-center text-sm text-muted-foreground">
+                Add a task name when logging time (e.g. “Sanding windows”) to start
+                building benchmarks here.
+              </p>
+            ) : (
+              <table className="w-full text-sm">
+                <thead className="bg-muted/60 text-xs uppercase text-muted-foreground">
+                  <tr>
+                    <th className="px-4 py-2 text-left">Task</th>
+                    <th className="px-4 py-2 text-right">Logs</th>
+                    <th className="px-4 py-2 text-right">Avg</th>
+                    <th className="px-4 py-2 text-right">Min</th>
+                    <th className="px-4 py-2 text-right">Max</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y">
+                  {taskRows.map((r) => (
+                    <tr key={r.task}>
+                      <td className="px-4 py-2 font-medium">{r.task}</td>
+                      <td className="px-4 py-2 text-right tabular-nums text-muted-foreground">
+                        {r.count}
+                      </td>
+                      <td className="px-4 py-2 text-right font-semibold tabular-nums">
+                        {formatHours(r.avgHours)}
+                      </td>
+                      <td className="px-4 py-2 text-right tabular-nums text-muted-foreground">
+                        {formatHours(r.minHours)}
+                      </td>
+                      <td className="px-4 py-2 text-right tabular-nums text-muted-foreground">
+                        {formatHours(r.maxHours)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </CardContent>
+        </Card>
+      </section>
+
       {/* Actions */}
       <div className="flex flex-wrap gap-2">
+        <Button
+          variant="outline"
+          onClick={exportTaskTimesCSV}
+          disabled={taskRows.length === 0}
+        >
+          <Download className="h-4 w-4" /> Task times CSV
+        </Button>
         {canSeeFinancials && (
           <>
             <Button variant="outline" onClick={exportPayrollCSV}>

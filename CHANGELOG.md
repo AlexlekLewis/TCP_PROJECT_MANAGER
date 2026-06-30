@@ -6,6 +6,20 @@ Format: one section per session, newest on top. Each entry: what changed, why, f
 
 ---
 
+## 2026-07-01 (task-time benchmarks — Pass 1) — "How long does sanding a window take"
+
+Alex: "make the daily entry a simple way to name a task, person and optional scope against a project … Gav and I want to collect how long individual tasks like sanding a window or gap filling skirts generally take." Designed via a multi-agent understand→design workflow (3 designs converged) + an adversarial review pass.
+
+Decision: **no task table.** The question is a pure aggregate over the `time_entries.task` free-text we already store. Consistency is kept two ways: proactively, the day-entry task field now suggests **all-time** names (most-logged first) so the crew re-taps one spelling; retroactively, a normalized group key folds case/punctuation/trailing-plural so "Sanding windows" / "sand window" count as one. See ADR (deferred) + the converged design.
+
+- **`src/lib/tasks.ts` (new)** — `cleanTask` (the only transform written to the DB: trim + collapse, null-on-empty), `taskKey` (group key: shared `normalize` + conservative last-word de-plural, guarded against "ss"/short roots), `taskSuggestions` (canonical spelling per key, frequency-ranked, capped), `mostFrequent` (deterministic tie-break so the label/React key don't flip on row order). `normalize` exported from [fuzzyMatch.ts](src/lib/fuzzyMatch.ts).
+- **Reports → "Task times"** ([Reports.tsx](src/pages/Reports.tsx)) — new `computeTaskBenchmarks` ([aggregations.ts](src/lib/aggregations.ts)) → per task: logs/avg/min/max hours, sorted by sample size. A `<section>` on the existing page (no new route), visible to **both** roles (hours/counts only — no money), all-time/all-project. Plus a Task-times CSV button placed outside the `canSeeFinancials` gate so Gavin can export it.
+- **Daily entry** ([DayEntryDialog.tsx](src/components/features/DayEntryDialog.tsx)) — task `<datalist>` now sourced from `useAllTimeEntries` (was today-only); writes run through `cleanTask`; placeholder → "e.g. Sanding windows". **Remember-last-scope**: removed the `setScopeId('')` create-success reset so a whole crew on one scope is a single scope-pick — guarded by a reconciliation effect that drops a carried scope if a concurrent admin archive/delete removed it from the picker (create-mode only, so edit-of-archived is preserved); the project-change reset stays (scope FK is project-scoped).
+- **Demo** ([demo.ts](src/lib/demo.ts)) — seeded recurring-task entries (incl. a "sanding window" variant) so the report shows real avg/min/max in demo mode.
+- **Tests** — new [tasks.test.ts](src/lib/tasks.test.ts) (stemming guards, tie determinism, suggestions) + benchmark/sort-tiebreak coverage; 73 green. Verified live: report folds the variant (Sanding windows · 3 logs · avg 2.5h), entry suggests all-time names, no money leaks to Gavin.
+
+**Pass 2 (next):** voice logging captures the spoken task + matches a room to a scope (needs the parse-voice-log edge function + an RPC migration to persist task/scope_id).
+
 ## 2026-07-01 (ship manager scopes + hide internal hours target) — Gavin can finally see the scope breakdown live
 
 Alex (live, on the deployed app): "Gavin can't see or edit the scopes/task list — I updated Northcote with scopes and went into Gavin's view and can't see them." Root cause: the **2026-06-12 manager-scopes work was never committed or deployed** — production still ran the version where `ProjectDetail` gated the whole Scopes + Variations sections behind `role === 'admin'`. The live DB was already serving scopes to a manager correctly; it was purely the deployed frontend.

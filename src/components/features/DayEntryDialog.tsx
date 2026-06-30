@@ -22,6 +22,7 @@ import {
 import { Badge } from '@/components/ui/badge';
 import type { Project, TimeEntry, Worker } from '@/types/db';
 import {
+  useAllTimeEntries,
   useBatchCreateTimeEntries,
   useCreateTimeEntry,
   useDeleteTimeEntry,
@@ -31,6 +32,7 @@ import {
 import { useCreateMaterialEntry, useMaterialEntries, useDeleteMaterialEntry } from '@/hooks/useMaterialEntries';
 import { formatCurrency } from '@/lib/currency';
 import { validateHours } from '@/lib/hours';
+import { cleanTask, taskSuggestions } from '@/lib/tasks';
 import { useProjectScopes } from '@/hooks/useProjectScopes';
 import { useCanSeeFinancials } from '@/lib/permissions';
 import { cn } from '@/lib/utils';
@@ -100,6 +102,7 @@ function DayEntryBody({
   initialProjectId?: string;
 }) {
   const { data: weekEntries = [] } = useTimeEntriesForWeek(date);
+  const { data: allEntries = [] } = useAllTimeEntries();
   const { data: materialsAll = [] } = useMaterialEntries();
   const createTE = useCreateTimeEntry();
   const batchCreateTE = useBatchCreateTimeEntries();
@@ -119,6 +122,13 @@ function DayEntryBody({
   const workerById = useMemo(() => new Map(workers.map((w) => [w.id, w])), [workers]);
   const projectById = useMemo(() => new Map(projects.map((p) => [p.id, p])), [projects]);
 
+  // All-time task names (most-logged first) for the Task type-ahead — re-using
+  // a prior name keeps the data consistent enough to benchmark in Reports.
+  const taskOptions = useMemo(
+    () => taskSuggestions(allEntries.map((e) => e.task)),
+    [allEntries],
+  );
+
   // Form state for adding a time entry — seeded from the quick-log chip if given.
   const [workerId, setWorkerId] = useState<string>(initialWorkerId ?? '');
   const [projectId, setProjectId] = useState<string>(initialProjectId ?? '');
@@ -134,12 +144,26 @@ function DayEntryBody({
 
   // Scopes for the currently-picked project (time entry). Empty array
   // when project has no scopes — picker is then hidden entirely.
-  const { data: timeScopes = [] } = useProjectScopes(projectId || null);
+  const { data: timeScopes = [], isLoading: scopesLoading } = useProjectScopes(
+    projectId || null,
+  );
   // Clear scope selection when project changes.
   const handleProjectChange = (next: string) => {
     setProjectId(next);
     setScopeId('');
   };
+
+  // Remember-last-scope keeps scopeId across multi-entry adds. If a concurrent
+  // admin edit archives or deletes that scope, the carried id would fail the FK
+  // insert (deleted) or silently mis-tag (archived). Reconcile a CARRIED scope
+  // against the live picker — but never in edit mode, where the scope was loaded
+  // from the entry being corrected and may legitimately be a non-active one.
+  useEffect(() => {
+    if (scopesLoading || editingId) return;
+    if (scopeId && !timeScopes.some((s) => s.id === scopeId && s.status === 'active')) {
+      setScopeId('');
+    }
+  }, [timeScopes, scopeId, scopesLoading, editingId]);
   const hoursInputRef = useRef<HTMLInputElement | null>(null);
 
   // Live tallies — sum each worker's hours across all of today's entries,
@@ -283,7 +307,7 @@ function DayEntryBody({
           project_id: projectId,
           scope_id: scopeId || null,
           hours: h,
-          task: task || null,
+          task: cleanTask(task),
           notes: notes || null,
         },
       });
@@ -299,18 +323,19 @@ function DayEntryBody({
       project_id: projectId,
       scope_id: scopeId || null,
       hours: h,
-      task: task || null,
+      task: cleanTask(task),
       notes: notes || null,
       ai_source_id: null,
     });
     // Soft-cap flag — informational, doesn't block (and the entry's already saved)
     if (previewWarning) toast.warning(previewWarning);
     else toast.success('Time entry added');
-    // Keep worker + project for fast multi-entry; clear the rest.
+    // Keep worker + project + scope for fast multi-entry (logging a whole crew
+    // on the same scope is one project + one scope pick). handleProjectChange
+    // still clears scope when the project changes, so a stale FK can't carry.
     setHours('');
     setTask('');
     setNotes('');
-    setScopeId('');
   };
 
   const submitMaterial = async () => {
@@ -592,16 +617,16 @@ function DayEntryBody({
               <Input
                 value={task}
                 onChange={(e) => setTask(e.target.value)}
-                placeholder="e.g. Ceilings"
+                placeholder="e.g. Sanding windows"
                 data-testid="task-input"
                 list="task-suggestions"
               />
-              {/* Native suggestions from prior entries — Gavin types
-                  "Ceilings" once, sees it next time as a one-tap option. */}
+              {/* Suggestions from ALL prior entries (not just today), most-logged
+                  first — so "Sanding windows" is a one-tap repeat and the crew
+                  converges on one spelling. This is what makes the Reports →
+                  Task times benchmarks aggregate cleanly. */}
               <datalist id="task-suggestions">
-                {Array.from(
-                  new Set(dayTE.map((e) => e.task).filter((x): x is string => !!x)),
-                ).map((t) => (
+                {taskOptions.map((t) => (
                   <option key={t} value={t} />
                 ))}
               </datalist>

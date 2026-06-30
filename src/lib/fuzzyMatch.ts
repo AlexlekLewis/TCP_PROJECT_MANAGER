@@ -12,7 +12,9 @@ export interface MatchResult<T extends Named> {
   candidates: Array<{ item: T; score: number }>;
 }
 
-function normalize(s: string): string {
+// Lowercase, strip punctuation, collapse whitespace. Shared canonicalization —
+// also reused by src/lib/tasks.ts so task grouping and fuzzy matching agree.
+export function normalize(s: string): string {
   return s
     .toLowerCase()
     .replace(/[^a-z0-9\s]/g, '')
