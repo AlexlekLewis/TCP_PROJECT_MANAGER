@@ -22,7 +22,10 @@ Alex: "when clients add variations to the jobs we need to be able to itemize and
 - **Demo** ([demo.ts](src/lib/demo.ts)) — `DEMO_VARIATIONS` seeds Northcote with an unpriced/pending "Sick bay" (12.5h + $128.40 materials) and an approved "Corridor B" ($1,450, 5h). Parked on Thu/Fri, which carry no base entries — the Mon–Wed tallies are what the soft-cap e2e suite asserts against.
 - **Tests** — 89 unit green (16 new across [aggregations.test.ts](src/lib/aggregations.test.ts) + [csv.test.ts](src/lib/csv.test.ts)); new [e2e/variations.spec.ts](e2e/variations.spec.ts) (6 cases) — full chromium suite 54 passed / 0 failed. Verified live end-to-end in demo mode: logged 3h against the sick bay, base bar didn't move, callout went 12.5h → 15.5h, both CSVs correct, approving rolled $1,600 into the quote ($48,000 base + $3,050 variations).
 
-**Fixed in passing: `npm run typecheck` was a no-op.** The root tsconfig has `files: []` and only project references, so `tsc --noEmit` type-checked nothing and had been silently passing. Now `tsc -b --noEmit` — confirmed it catches a planted error.
+**Fixed in passing — two dead quality gates.**
+
+1. `npm run typecheck` was a **no-op**. The root tsconfig has `files: []` and only project references, so `tsc --noEmit` type-checked nothing and had been silently passing. Now `tsc -b --noEmit` — confirmed it catches a planted error.
+2. **CI's Secret-scan step had failed on every commit since at least 2026-05-24** (five consecutive red runs on `main`), so the whole `build-and-test` job — lint, typecheck, unit tests, build — never reported. The 2026-06-30 entry below says this was fixed by excluding `.env.example` from the grep; that exclude was never actually added to [ci.yml](.github/workflows/ci.yml). Two placeholders matched: the commented service-role line in `.env.example`, and the changelog prose describing it. Fixed at the source — `.env.example` now lists the secret **names** instead of `NAME=<value>` assignments — rather than by adding excludes, so a genuinely leaked key in either file would still be caught.
 
 ## 2026-07-01 (task-time benchmarks — Pass 1) — "How long does sanding a window take"
 
@@ -46,7 +49,7 @@ Alex (live, on the deployed app): "Gavin can't see or edit the scopes/task list 
 
 **Hide the internal hours target from Gavin** ([ProjectDetail.tsx](src/pages/ProjectDetail.tsx), [ManagerLanding.tsx](src/pages/ManagerLanding.tsx), [Projects.tsx](src/pages/Projects.tsx), [Dashboard.tsx](src/pages/Dashboard.tsx)) — Alex sets `project.quoted_hours` deliberately tighter than reality as an internal management lever; Gavin should only ever see the **scoped** hours. So `project.quoted_hours` is now admin-only everywhere: on the project page the manager's hours card + the project-level "Hours used" bar use the **sum of scope hours** (e.g. "33h of 50h scoped", 66%) instead of the quote (which showed 10% vs 320h); ManagerLanding shows "Xh logged" with no target; the Projects-list Hours row is admin-gated; Dashboard's quote/% are admin-gated (defensive — managers see ManagerLanding at `/`, not Dashboard). Admin view unchanged.
 
-**CI** ([.github/workflows/ci.yml](.github/workflows/ci.yml)) — the Secret-scan step had been failing on **every** commit (a harmless commented `# SUPABASE_SERVICE_ROLE_KEY=eyJ...` placeholder in `.env.example`); excluded `.env.example` from the grep so CI gives real signal again.
+**CI** ([.github/workflows/ci.yml](.github/workflows/ci.yml)) — the Secret-scan step had been failing on **every** commit (a harmless commented service-role-key placeholder in `.env.example`, which the grep read as a real assignment).
 
 **Deploy note:** pushing to `main` does **not** auto-deploy here — production ships via `vercel --prod` (CLI). Both the scopes fix and these changes were deployed that way and verified live.
 
