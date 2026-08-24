@@ -1,5 +1,7 @@
 import { useState } from 'react';
-import { Check, Pencil, Plus, X } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { Check, ChevronDown, ChevronRight, Clock, Download, Pencil, Plus, X } from 'lucide-react';
+import { format, parseISO } from 'date-fns';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -14,8 +16,18 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { formatCurrency } from '@/lib/currency';
+import { formatHours } from '@/lib/hours';
+import { downloadCSV, slugify, variationWorksheetCSV } from '@/lib/csv';
+import { computeVariationTotals, type VariationTotals } from '@/lib/aggregations';
 import { toast } from 'sonner';
-import type { ProjectVariation, VariationStatus } from '@/types/db';
+import { cn } from '@/lib/utils';
+import type {
+  MaterialEntry,
+  ProjectVariation,
+  TimeEntry,
+  VariationStatus,
+  Worker,
+} from '@/types/db';
 
 interface AddInput {
   description: string;
@@ -26,7 +38,12 @@ interface AddInput {
 
 interface Props {
   projectId: string;
+  projectName: string;
   variations: ProjectVariation[];
+  /** All time / material entries on the project — filtered per variation here. */
+  timeEntries: TimeEntry[];
+  materialEntries: MaterialEntry[];
+  workers: Worker[];
   approvedTotal: number;
   /** Admin sees + sets the dollar amount and can approve/reject. Manager
    *  (Gavin) logs the extra scope by description only and never sees money. */
@@ -42,10 +59,19 @@ interface Props {
 /**
  * Variations = extra scope a client signs off mid-job ("while you're here,
  * can you do the bathroom too?"). Only `approved` rolls into the quote.
- * Both roles can add one; pricing and approval are admin-only.
+ *
+ * Each one carries its own itemised ledger — who worked on it, what day, how
+ * many hours, what they did — because that's what Alex needs to put a price on
+ * it and what the client gets when they query the charge. Both roles can add a
+ * variation and log work against it; pricing and approval are admin-only.
  */
 export function VariationsSection({
+  projectId,
+  projectName,
   variations,
+  timeEntries,
+  materialEntries,
+  workers,
   approvedTotal,
   canSeeFinancials,
   onAdd,
@@ -80,73 +106,24 @@ export function VariationsSection({
       {sorted.length === 0 ? (
         <Card>
           <CardContent className="py-4 text-center text-xs text-muted-foreground">
-            No variations on this project yet. Add one when the client signs off extra scope.
+            No variations on this project yet. Add one when the client asks for extra work.
           </CardContent>
         </Card>
       ) : (
-        <Card>
-          <CardContent className="divide-y p-0">
-            {sorted.map((v) => (
-              <div key={v.id} className="flex items-start gap-3 px-4 py-3 text-sm">
-                <div className="min-w-0 flex-1 space-y-0.5">
-                  <p className="font-medium">{v.description}</p>
-                  {v.notes && <p className="text-xs text-muted-foreground">{v.notes}</p>}
-                  <p className="text-xs text-muted-foreground">
-                    {new Date(v.created_at).toLocaleDateString('en-AU')}
-                  </p>
-                </div>
-                <div className="text-right">
-                  {canSeeFinancials &&
-                    (v.amount != null ? (
-                      <p className="font-semibold tabular-nums">
-                        {formatCurrency(v.amount, { whole: true })}
-                      </p>
-                    ) : (
-                      <p className="text-xs font-medium uppercase tracking-wide text-amber-700 dark:text-amber-300">
-                        Unpriced
-                      </p>
-                    ))}
-                  <StatusBadge status={v.status} />
-                </div>
-                {/* Admin: price/edit + approve/reject. Manager sees neither. */}
-                {canSeeFinancials && (
-                  <div className="flex flex-col gap-1">
-                    {onUpdate && (
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="h-7"
-                        onClick={() => setEditing(v)}
-                      >
-                        <Pencil className="h-3 w-3" /> {v.amount == null ? 'Price' : 'Edit'}
-                      </Button>
-                    )}
-                    {v.status === 'pending' && onSetStatus && (
-                      <>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          className="h-7 border-emerald-300 text-emerald-700 hover:bg-emerald-50 dark:border-emerald-700 dark:text-emerald-300 dark:hover:bg-emerald-950"
-                          onClick={() => onSetStatus(v.id, 'approved')}
-                        >
-                          <Check className="h-3 w-3" /> Approve
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          className="h-7"
-                          onClick={() => onSetStatus(v.id, 'rejected')}
-                        >
-                          <X className="h-3 w-3" /> Reject
-                        </Button>
-                      </>
-                    )}
-                  </div>
-                )}
-              </div>
-            ))}
-          </CardContent>
-        </Card>
+        <div className="space-y-2">
+          {sorted.map((v) => (
+            <VariationCard
+              key={v.id}
+              variation={v}
+              projectId={projectId}
+              projectName={projectName}
+              totals={computeVariationTotals(v, timeEntries, materialEntries, workers)}
+              canSeeFinancials={canSeeFinancials}
+              onEdit={onUpdate ? () => setEditing(v) : undefined}
+              onSetStatus={onSetStatus}
+            />
+          ))}
+        </div>
       )}
 
       {/* Add — both roles. Manager form is description + notes only. */}
@@ -167,6 +144,11 @@ export function VariationsSection({
         onClose={() => setEditing(null)}
         canSeeFinancials
         variation={editing ?? undefined}
+        loggedTotals={
+          editing
+            ? computeVariationTotals(editing, timeEntries, materialEntries, workers)
+            : undefined
+        }
         onSubmit={async (input) => {
           if (editing && onUpdate) {
             await onUpdate(editing.id, {
@@ -182,24 +164,244 @@ export function VariationsSection({
   );
 }
 
-function StatusBadge({ status }: { status: VariationStatus }) {
+/**
+ * One variation and its ledger. Collapsed it reads as a headline (what, what
+ * state, how many hours); expanded it itemises every line of work so the four
+ * facts Alex needs — who, when, how long, what — are all on screen.
+ */
+function VariationCard({
+  variation: v,
+  projectId,
+  projectName,
+  totals,
+  canSeeFinancials,
+  onEdit,
+  onSetStatus,
+}: {
+  variation: ProjectVariation;
+  projectId: string;
+  projectName: string;
+  totals: VariationTotals;
+  canSeeFinancials: boolean;
+  onEdit?: () => void;
+  onSetStatus?: (id: string, status: VariationStatus) => Promise<void>;
+}) {
+  const hasWork = totals.lines.length > 0 || totals.materials.length > 0;
+  const [open, setOpen] = useState(false);
+  // Work logged against a rejected variation is work nobody is paying for.
+  const unbillable = v.status === 'rejected' && totals.labourHours > 0;
+
+  const exportWorksheet = () => {
+    if (totals.lines.length === 0) {
+      toast.error('No hours logged against this variation yet');
+      return;
+    }
+    downloadCSV(
+      `variation-${slugify(projectName)}-${slugify(v.description)}.csv`,
+      variationWorksheetCSV(totals.lines, canSeeFinancials),
+    );
+  };
+
+  return (
+    <Card className={cn(unbillable && 'border-destructive/50')}>
+      <CardContent className="space-y-3 p-4">
+        <div className="flex items-start gap-3">
+          <div className="min-w-0 flex-1 space-y-1">
+            <p className="font-medium leading-snug">{v.description}</p>
+            <div className="flex flex-wrap items-center gap-1.5">
+              <StatusBadge status={v.status} amount={v.amount} canSeeFinancials={canSeeFinancials} />
+              {unbillable && (
+                <span className="rounded bg-destructive/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-destructive">
+                  Unbillable — {formatHours(totals.labourHours)} logged
+                </span>
+              )}
+              <span className="text-xs text-muted-foreground">
+                Added {format(parseISO(v.created_at.slice(0, 10)), 'd MMM')}
+              </span>
+            </div>
+            {v.notes && <p className="text-xs text-muted-foreground">{v.notes}</p>}
+          </div>
+          {canSeeFinancials && v.amount != null && (
+            <p className="shrink-0 font-semibold tabular-nums">
+              {formatCurrency(v.amount, { whole: true })}
+            </p>
+          )}
+        </div>
+
+        {/* Rollup — the headline numbers, always visible. */}
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 rounded-md bg-secondary/50 px-3 py-2 text-xs">
+          <span className="flex items-center gap-1.5">
+            <Clock className="h-3.5 w-3.5 text-muted-foreground" />
+            <span className="font-semibold tabular-nums">{formatHours(totals.labourHours)}</span>
+            <span className="text-muted-foreground">labour</span>
+          </span>
+          {canSeeFinancials && totals.materialCost > 0 && (
+            <span>
+              <span className="font-semibold tabular-nums">
+                {formatCurrency(totals.materialCost)}
+              </span>{' '}
+              <span className="text-muted-foreground">materials</span>
+            </span>
+          )}
+          {canSeeFinancials && totals.labourRevenue > 0 && (
+            <span className="text-muted-foreground">
+              worth {formatCurrency(totals.labourRevenue, { whole: true })} at charge-out
+            </span>
+          )}
+          {hasWork && (
+            <button
+              type="button"
+              onClick={() => setOpen((o) => !o)}
+              className="ml-auto flex items-center gap-1 font-medium text-foreground hover:underline"
+              data-testid={`variation-toggle-${v.id}`}
+            >
+              {open ? (
+                <ChevronDown className="h-3.5 w-3.5" />
+              ) : (
+                <ChevronRight className="h-3.5 w-3.5" />
+              )}
+              {open ? 'Hide' : 'Show'} breakdown
+            </button>
+          )}
+        </div>
+
+        {/* The ledger — who, what day, how long, what they did. */}
+        {open && hasWork && (
+          <div className="space-y-2" data-testid={`variation-ledger-${v.id}`}>
+            {totals.lines.length > 0 && (
+              <div className="divide-y rounded-md border text-sm">
+                {totals.lines.map((l) => (
+                  <div key={l.id} className="flex items-center gap-3 px-3 py-2">
+                    <span className="w-24 shrink-0 text-xs text-muted-foreground">
+                      {format(parseISO(l.date), 'EEE d MMM')}
+                    </span>
+                    <span className="w-16 shrink-0 font-medium">{l.workerName}</span>
+                    <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
+                      {l.task ?? l.notes ?? '—'}
+                    </span>
+                    <span className="shrink-0 tabular-nums font-semibold">
+                      {l.hours.toFixed(1)}h
+                    </span>
+                    {canSeeFinancials && (
+                      <span className="w-16 shrink-0 text-right tabular-nums text-muted-foreground">
+                        {formatCurrency(l.revenue, { whole: true })}
+                      </span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+            {totals.materials.length > 0 && (
+              <div className="divide-y rounded-md border text-sm">
+                {totals.materials.map((m) => (
+                  <div key={m.id} className="flex items-center gap-3 px-3 py-2">
+                    <span className="w-24 shrink-0 text-xs text-muted-foreground">
+                      {format(parseISO(m.entry_date), 'EEE d MMM')}
+                    </span>
+                    <span className="min-w-0 flex-1 truncate text-xs">{m.description}</span>
+                    {canSeeFinancials && (
+                      <span className="shrink-0 tabular-nums font-semibold">
+                        {formatCurrency(m.cost)}
+                      </span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Actions */}
+        <div className="flex flex-wrap items-center gap-2">
+          {v.status !== 'rejected' && (
+            <Button size="sm" variant="outline" className="h-7" asChild>
+              <Link to={`/calendar?log=today&project=${projectId}&variation=${v.id}`}>
+                <Plus className="h-3 w-3" /> Log time
+              </Link>
+            </Button>
+          )}
+          {totals.lines.length > 0 && (
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-7"
+              onClick={exportWorksheet}
+              data-testid={`variation-export-${v.id}`}
+            >
+              <Download className="h-3 w-3" /> Export
+            </Button>
+          )}
+          {/* Admin: price/edit + approve/reject. Manager sees neither. */}
+          {canSeeFinancials && onEdit && (
+            <Button size="sm" variant="outline" className="h-7" onClick={onEdit}>
+              <Pencil className="h-3 w-3" /> {v.amount == null ? 'Price' : 'Edit'}
+            </Button>
+          )}
+          {canSeeFinancials && v.status === 'pending' && onSetStatus && (
+            <>
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-7 border-emerald-300 text-emerald-700 hover:bg-emerald-50 dark:border-emerald-700 dark:text-emerald-300 dark:hover:bg-emerald-950"
+                onClick={() => onSetStatus(v.id, 'approved')}
+              >
+                <Check className="h-3 w-3" /> Approve
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-7"
+                onClick={() => onSetStatus(v.id, 'rejected')}
+              >
+                <X className="h-3 w-3" /> Reject
+              </Button>
+            </>
+          )}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+/**
+ * State has to be unambiguous — the whole point of the feature is knowing which
+ * work has been done but not yet turned into money. A pending variation reads
+ * differently depending on whether it has a price on it yet.
+ */
+function StatusBadge({
+  status,
+  amount,
+  canSeeFinancials,
+}: {
+  status: VariationStatus;
+  amount: number | null;
+  canSeeFinancials: boolean;
+}) {
+  const base = 'rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide';
   if (status === 'approved') {
     return (
-      <span className="text-[10px] font-medium uppercase tracking-wide text-emerald-700 dark:text-emerald-300">
+      <span className={cn(base, 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300')}>
         Approved
       </span>
     );
   }
   if (status === 'rejected') {
     return (
-      <span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground line-through">
-        Rejected
+      <span className={cn(base, 'bg-muted text-muted-foreground line-through')}>Rejected</span>
+    );
+  }
+  // Pending. Admin distinguishes "I haven't priced it" from "priced, waiting on
+  // the client"; the manager just sees that Alex hasn't finished with it.
+  if (canSeeFinancials && amount == null) {
+    return (
+      <span className={cn(base, 'bg-amber-500/15 text-amber-700 dark:text-amber-300')}>
+        Needs pricing
       </span>
     );
   }
   return (
-    <span className="text-[10px] font-medium uppercase tracking-wide text-amber-700 dark:text-amber-300">
-      Pending
+    <span className={cn(base, 'bg-amber-500/10 text-amber-700 dark:text-amber-300')}>
+      {canSeeFinancials ? 'Awaiting approval' : 'With Alex'}
     </span>
   );
 }
@@ -209,12 +411,15 @@ function VariationDialog({
   onClose,
   canSeeFinancials,
   variation,
+  loggedTotals,
   onSubmit,
 }: {
   open: boolean;
   onClose: () => void;
   canSeeFinancials: boolean;
   variation?: ProjectVariation;
+  /** Work already logged — shown while pricing so Alex prices off real hours. */
+  loggedTotals?: VariationTotals;
   onSubmit: (input: AddInput) => Promise<void>;
 }) {
   const isEdit = !!variation;
@@ -258,11 +463,26 @@ function VariationDialog({
           <div className="space-y-1.5">
             <Label>Description *</Label>
             <Input
-              placeholder="e.g. Bathroom — repaint walls + trim"
+              placeholder="e.g. Sick bay — repaint walls + trim"
               value={description}
               onChange={(e) => setDescription(e.target.value)}
             />
           </div>
+          {/* Price off what was actually spent, not off memory. */}
+          {canSeeFinancials && loggedTotals && loggedTotals.labourHours > 0 && (
+            <div className="rounded-md border bg-secondary/50 px-3 py-2 text-xs">
+              <p className="font-medium">
+                {formatHours(loggedTotals.labourHours)} labour
+                {loggedTotals.materialCost > 0 &&
+                  ` · ${formatCurrency(loggedTotals.materialCost)} materials`}{' '}
+                logged so far
+              </p>
+              <p className="text-muted-foreground">
+                Worth {formatCurrency(loggedTotals.labourRevenue, { whole: true })} at charge-out ·
+                cost {formatCurrency(loggedTotals.labourCost + loggedTotals.materialCost, { whole: true })}
+              </p>
+            </div>
+          )}
           {canSeeFinancials ? (
             <div className="space-y-1.5">
               <Label>Amount $ (optional — leave blank to price later)</Label>
@@ -276,7 +496,8 @@ function VariationDialog({
             </div>
           ) : (
             <p className="rounded-md bg-secondary/60 px-3 py-2 text-xs text-muted-foreground">
-              Alex will price and approve this. Just describe the extra work and add any notes.
+              Alex will price and approve this. Just describe the extra work and add any notes —
+              then log your hours against it as you go.
             </p>
           )}
           <div className="space-y-1.5">

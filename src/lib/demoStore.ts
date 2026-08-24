@@ -7,6 +7,7 @@ import {
   DEMO_PROJECTS,
   DEMO_TIME_ENTRIES,
   DEMO_USER_ID,
+  DEMO_VARIATIONS,
   DEMO_VOICE_LOGS,
   DEMO_WEEK_LOCKS,
   DEMO_WORKERS,
@@ -32,7 +33,7 @@ class DemoStore {
   materialEntries: MaterialEntry[] = [...DEMO_MATERIAL_ENTRIES];
   voiceLogs: VoiceLog[] = [...DEMO_VOICE_LOGS];
   weekLocks: WeekLock[] = [...DEMO_WEEK_LOCKS];
-  variations: ProjectVariation[] = [];
+  variations: ProjectVariation[] = [...DEMO_VARIATIONS];
   scopes: ProjectScope[] = [];
 
   private listeners = new Set<Listener>();

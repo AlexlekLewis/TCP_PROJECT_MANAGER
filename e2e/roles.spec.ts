@@ -26,9 +26,27 @@ test.describe('Manager (Gavin) — no financials anywhere', () => {
   test('project detail hides financial cards', async ({ page }) => {
     await switchTo(page, 'manager');
     await page.goto('/projects/p-northcote');
-    await expect(page.getByText('Hours logged')).toBeVisible();
+    await expect(page.getByText('Hours on quoted work')).toBeVisible();
     await expect(page.getByText(/Gross margin/i)).toHaveCount(0);
     await expect(page.getByText(/Materials budget/i)).toHaveCount(0);
+  });
+
+  test('variation ledger and its export carry no $ for the manager', async ({ page }) => {
+    await switchTo(page, 'manager');
+    await page.goto('/projects/p-northcote');
+    await page.getByTestId('variation-toggle-var-sickbay').click();
+    const ledger = page.getByTestId('variation-ledger-var-sickbay');
+    await expect(ledger).toBeVisible();
+    // The four facts are all there...
+    await expect(ledger).toContainText('Jerry');
+    await expect(ledger).toContainText('Prep + patch');
+    await expect(ledger).toContainText('6.0h');
+    // ...and not a dollar sign anywhere in it, nor in the unbilled callout.
+    await expect(ledger).not.toContainText('$');
+    await expect(page.getByTestId('unbilled-variation-callout')).not.toContainText('$');
+    // Pricing + approval stay admin-only.
+    await expect(page.getByRole('button', { name: /^Price$/ })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: /^Approve$/ })).toHaveCount(0);
   });
 
   test('projects list hides Quote line', async ({ page }) => {
