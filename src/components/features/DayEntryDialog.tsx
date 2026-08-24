@@ -15,12 +15,14 @@ import { Label } from '@/components/ui/label';
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
+  SelectLabel,
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
-import type { Project, TimeEntry, Worker } from '@/types/db';
+import type { Project, ProjectScope, ProjectVariation, TimeEntry, Worker } from '@/types/db';
 import {
   useAllTimeEntries,
   useBatchCreateTimeEntries,
@@ -34,6 +36,7 @@ import { formatCurrency } from '@/lib/currency';
 import { validateHours } from '@/lib/hours';
 import { cleanTask, taskSuggestions } from '@/lib/tasks';
 import { useProjectScopes } from '@/hooks/useProjectScopes';
+import { useProjectVariations } from '@/hooks/useProjectVariations';
 import { useCanSeeFinancials } from '@/lib/permissions';
 import { cn } from '@/lib/utils';
 
@@ -46,6 +49,8 @@ interface Props {
   /** Pre-seed the time entry form with these values (used by Quick Log chips). */
   initialWorkerId?: string;
   initialProjectId?: string;
+  /** Pre-tag the entry to a variation (used by "Log time" on a variation row). */
+  initialVariationId?: string;
 }
 
 export function DayEntryDialog({
@@ -56,6 +61,7 @@ export function DayEntryDialog({
   onClose,
   initialWorkerId,
   initialProjectId,
+  initialVariationId,
 }: Props) {
   return (
     <Dialog open={!!date} onOpenChange={(v) => !v && onClose()}>
@@ -79,6 +85,7 @@ export function DayEntryDialog({
             locked={locked}
             initialWorkerId={initialWorkerId}
             initialProjectId={initialProjectId}
+            initialVariationId={initialVariationId}
           />
         )}
       </DialogContent>
@@ -93,6 +100,7 @@ function DayEntryBody({
   locked,
   initialWorkerId,
   initialProjectId,
+  initialVariationId,
 }: {
   date: string;
   workers: Worker[];
@@ -100,6 +108,7 @@ function DayEntryBody({
   locked: boolean;
   initialWorkerId?: string;
   initialProjectId?: string;
+  initialVariationId?: string;
 }) {
   const { data: weekEntries = [] } = useTimeEntriesForWeek(date);
   const { data: allEntries = [] } = useAllTimeEntries();
@@ -132,7 +141,10 @@ function DayEntryBody({
   // Form state for adding a time entry — seeded from the quick-log chip if given.
   const [workerId, setWorkerId] = useState<string>(initialWorkerId ?? '');
   const [projectId, setProjectId] = useState<string>(initialProjectId ?? '');
+  // Scope and variation are mutually exclusive — an hour is either base-quote
+  // work or client-variation work, never both. One picker sets both.
   const [scopeId, setScopeId] = useState<string>('');
+  const [variationId, setVariationId] = useState<string>(initialVariationId ?? '');
   const [hours, setHours] = useState<string>('');
   const [task, setTask] = useState<string>('');
   const [notes, setNotes] = useState<string>('');
@@ -142,15 +154,19 @@ function DayEntryBody({
   const [editingId, setEditingId] = useState<string | null>(null);
   const timeFormRef = useRef<HTMLFieldSetElement | null>(null);
 
-  // Scopes for the currently-picked project (time entry). Empty array
-  // when project has no scopes — picker is then hidden entirely.
+  // Scopes + variations for the currently-picked project (time entry). Both
+  // empty means the project is a single un-varied job — picker stays hidden.
   const { data: timeScopes = [], isLoading: scopesLoading } = useProjectScopes(
     projectId || null,
   );
-  // Clear scope selection when project changes.
+  const { data: timeVariations = [], isLoading: variationsLoading } = useProjectVariations(
+    projectId || null,
+  );
+  // Clear scope + variation selection when project changes.
   const handleProjectChange = (next: string) => {
     setProjectId(next);
     setScopeId('');
+    setVariationId('');
   };
 
   // Remember-last-scope keeps scopeId across multi-entry adds. If a concurrent
@@ -164,6 +180,15 @@ function DayEntryBody({
       setScopeId('');
     }
   }, [timeScopes, scopeId, scopesLoading, editingId]);
+
+  // Same reconciliation for a carried variation. A variation that's since been
+  // rejected shouldn't keep collecting hours nobody will bill.
+  useEffect(() => {
+    if (variationsLoading || editingId) return;
+    if (variationId && !timeVariations.some((v) => v.id === variationId && v.status !== 'rejected')) {
+      setVariationId('');
+    }
+  }, [timeVariations, variationId, variationsLoading, editingId]);
   const hoursInputRef = useRef<HTMLInputElement | null>(null);
 
   // Live tallies — sum each worker's hours across all of today's entries,
@@ -256,10 +281,13 @@ function DayEntryBody({
   const [matDesc, setMatDesc] = useState<string>('');
   const [matCost, setMatCost] = useState<string>('');
   const [matSupplier, setMatSupplier] = useState<string>('');
+  const [matVariationId, setMatVariationId] = useState<string>('');
   const { data: matScopes = [] } = useProjectScopes(matProjectId || null);
+  const { data: matVariations = [] } = useProjectVariations(matProjectId || null);
   const handleMatProjectChange = (next: string) => {
     setMatProjectId(next);
     setMatScopeId('');
+    setMatVariationId('');
   };
 
   // Load an existing entry into the form to correct it. Scrolls the form into
@@ -269,6 +297,7 @@ function DayEntryBody({
     setWorkerId(e.worker_id);
     setProjectId(e.project_id);
     setScopeId(e.scope_id ?? '');
+    setVariationId(e.variation_id ?? '');
     setHours(String(Number(e.hours)));
     setTask(e.task ?? '');
     setNotes(e.notes ?? '');
@@ -283,6 +312,7 @@ function DayEntryBody({
     setWorkerId('');
     setProjectId('');
     setScopeId('');
+    setVariationId('');
     setHours('');
     setTask('');
     setNotes('');
@@ -306,6 +336,7 @@ function DayEntryBody({
           worker_id: workerId,
           project_id: projectId,
           scope_id: scopeId || null,
+          variation_id: variationId || null,
           hours: h,
           task: cleanTask(task),
           notes: notes || null,
@@ -322,6 +353,7 @@ function DayEntryBody({
       worker_id: workerId,
       project_id: projectId,
       scope_id: scopeId || null,
+      variation_id: variationId || null,
       hours: h,
       task: cleanTask(task),
       notes: notes || null,
@@ -344,6 +376,7 @@ function DayEntryBody({
       entry_date: date,
       project_id: matProjectId,
       scope_id: matScopeId || null,
+      variation_id: matVariationId || null,
       description: matDesc,
       cost: Number.parseFloat(matCost),
       supplier: matSupplier || null,
@@ -375,9 +408,11 @@ function DayEntryBody({
           entry_date: date,
           worker_id: e.worker_id,
           project_id: e.project_id,
-          // Preserve scope tagging from yesterday's entries so clone-day
-          // recreates the same scope split (Pierce on Exterior etc.).
+          // Preserve scope + variation tagging from yesterday's entries so
+          // clone-day recreates the same split (Pierce on Exterior, Jerry
+          // still on the sick-bay variation, etc.).
           scope_id: e.scope_id ?? null,
+          variation_id: e.variation_id ?? null,
           hours: Number(e.hours),
           task: e.task,
           notes: e.notes,
@@ -575,29 +610,17 @@ function DayEntryBody({
               </Select>
             </div>
           </div>
-          {timeScopes.length > 0 && (
-            <div className="space-y-1.5">
-              <Label>Scope (optional)</Label>
-              <Select
-                value={scopeId || '__none__'}
-                onValueChange={(v) => setScopeId(v === '__none__' ? '' : v)}
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__none__">— Project-general (travel, mob, etc.) —</SelectItem>
-                  {timeScopes
-                    .filter((s) => s.status === 'active')
-                    .map((s) => (
-                      <SelectItem key={s.id} value={s.id}>
-                        {s.name}
-                      </SelectItem>
-                    ))}
-                </SelectContent>
-              </Select>
-            </div>
-          )}
+          <WorkAgainstPicker
+            scopes={timeScopes}
+            variations={timeVariations}
+            scopeId={scopeId}
+            variationId={variationId}
+            onChange={(next) => {
+              setScopeId(next.scopeId);
+              setVariationId(next.variationId);
+            }}
+            testId="time-work-against"
+          />
           <div className="grid gap-3 md:grid-cols-[1fr_1fr_2fr]">
             <div className="space-y-1.5">
               <Label>Hours</Label>
@@ -733,29 +756,17 @@ function DayEntryBody({
               </SelectContent>
             </Select>
           </div>
-          {matScopes.length > 0 && (
-            <div className="space-y-1.5">
-              <Label>Scope (optional)</Label>
-              <Select
-                value={matScopeId || '__none__'}
-                onValueChange={(v) => setMatScopeId(v === '__none__' ? '' : v)}
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__none__">— Project-general —</SelectItem>
-                  {matScopes
-                    .filter((s) => s.status === 'active')
-                    .map((s) => (
-                      <SelectItem key={s.id} value={s.id}>
-                        {s.name}
-                      </SelectItem>
-                    ))}
-                </SelectContent>
-              </Select>
-            </div>
-          )}
+          <WorkAgainstPicker
+            scopes={matScopes}
+            variations={matVariations}
+            scopeId={matScopeId}
+            variationId={matVariationId}
+            onChange={(next) => {
+              setMatScopeId(next.scopeId);
+              setMatVariationId(next.variationId);
+            }}
+            testId="material-work-against"
+          />
           <div className="space-y-1.5">
             <Label>Description</Label>
             <Input
@@ -788,6 +799,79 @@ function DayEntryBody({
           </Button>
         </fieldset>
       )}
+    </div>
+  );
+}
+
+/**
+ * One picker for "what was this against?" — project-general, a priced scope, or
+ * a client variation. Deliberately ONE control rather than two: scope and
+ * variation are mutually exclusive (an hour is base-quote work or extra work,
+ * never both), and a single dropdown makes that impossible to get wrong on a
+ * phone. Hidden entirely when the project has neither.
+ *
+ * Rejected variations are excluded — the client said no, so nothing new should
+ * be logged against it.
+ */
+function WorkAgainstPicker({
+  scopes,
+  variations,
+  scopeId,
+  variationId,
+  onChange,
+  testId,
+}: {
+  scopes: ProjectScope[];
+  variations: ProjectVariation[];
+  scopeId: string;
+  variationId: string;
+  onChange: (next: { scopeId: string; variationId: string }) => void;
+  testId: string;
+}) {
+  const activeScopes = scopes.filter((s) => s.status === 'active');
+  const openVariations = variations.filter((v) => v.status !== 'rejected');
+  if (activeScopes.length === 0 && openVariations.length === 0) return null;
+
+  const value = variationId ? `var:${variationId}` : scopeId ? `scope:${scopeId}` : '__none__';
+
+  return (
+    <div className="space-y-1.5">
+      <Label>Work against (optional)</Label>
+      <Select
+        value={value}
+        onValueChange={(v) => {
+          if (v.startsWith('var:')) onChange({ scopeId: '', variationId: v.slice(4) });
+          else if (v.startsWith('scope:')) onChange({ scopeId: v.slice(6), variationId: '' });
+          else onChange({ scopeId: '', variationId: '' });
+        }}
+      >
+        <SelectTrigger data-testid={testId}>
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="__none__">— Project-general (travel, mob, etc.) —</SelectItem>
+          {activeScopes.length > 0 && (
+            <SelectGroup>
+              <SelectLabel>Quoted scopes</SelectLabel>
+              {activeScopes.map((s) => (
+                <SelectItem key={s.id} value={`scope:${s.id}`}>
+                  {s.name}
+                </SelectItem>
+              ))}
+            </SelectGroup>
+          )}
+          {openVariations.length > 0 && (
+            <SelectGroup>
+              <SelectLabel>Variations (extra work)</SelectLabel>
+              {openVariations.map((v) => (
+                <SelectItem key={v.id} value={`var:${v.id}`}>
+                  {v.description}
+                </SelectItem>
+              ))}
+            </SelectGroup>
+          )}
+        </SelectContent>
+      </Select>
     </div>
   );
 }

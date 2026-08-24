@@ -94,6 +94,13 @@ export interface TimeEntry {
    * project).
    */
   scope_id: UUID | null;
+  /**
+   * Optional variation tag — extra scope the client added mid-job. Mutually
+   * exclusive with `scope_id` (DB CHECK): an hour is either base-scope work or
+   * variation work, never both, or it double-counts once the project's
+   * hours-vs-quote progress splits into base and variation buckets.
+   */
+  variation_id: UUID | null;
   hours: number;
   /** Free-text label for the sub-task (e.g., "Ceilings", "Skirtings"). */
   task: string | null;
@@ -110,6 +117,8 @@ export interface MaterialEntry {
   project_id: UUID;
   /** Optional scope tag — same semantics as TimeEntry.scope_id. */
   scope_id: UUID | null;
+  /** Optional variation tag — same semantics as TimeEntry.variation_id. */
+  variation_id: UUID | null;
   description: string;
   cost: number;
   supplier: string | null;

@@ -3,6 +3,8 @@ import {
   computeProjectTotals,
   computeScopeTotals,
   computeTaskBenchmarks,
+  computeUnbilledVariationWork,
+  computeVariationTotals,
   computeWeeklyPnL,
   computeWorkerWeek,
 } from './aggregations';
@@ -49,12 +51,12 @@ const project: Project = {
 };
 
 const te: TimeEntry[] = [
-  { id: 't1', entry_date: '2026-04-20', worker_id: 'w1', project_id: 'p1', hours: 10, task: null, notes: null, scope_id: null, created_by: 'u', ai_source_id: null, created_at: now, updated_at: now },
-  { id: 't2', entry_date: '2026-04-20', worker_id: 'w2', project_id: 'p1', hours: 8,  task: null, notes: null, scope_id: null, created_by: 'u', ai_source_id: null, created_at: now, updated_at: now },
+  { id: 't1', entry_date: '2026-04-20', worker_id: 'w1', project_id: 'p1', hours: 10, task: null, notes: null, scope_id: null, variation_id: null, created_by: 'u', ai_source_id: null, created_at: now, updated_at: now },
+  { id: 't2', entry_date: '2026-04-20', worker_id: 'w2', project_id: 'p1', hours: 8,  task: null, notes: null, scope_id: null, variation_id: null, created_by: 'u', ai_source_id: null, created_at: now, updated_at: now },
 ];
 
 const me: MaterialEntry[] = [
-  { id: 'm1', entry_date: '2026-04-20', project_id: 'p1', scope_id: null, description: 'Paint', cost: 500, supplier: null, created_by: 'u', ai_source_id: null, created_at: now },
+  { id: 'm1', entry_date: '2026-04-20', project_id: 'p1', scope_id: null, variation_id: null, description: 'Paint', cost: 500, supplier: null, created_by: 'u', ai_source_id: null, created_at: now },
 ];
 
 describe('computeProjectTotals — cost + revenue + profit health', () => {
@@ -126,6 +128,99 @@ describe('computeProjectTotals — variations roll into total quote', () => {
   });
 });
 
+describe('Variation labour — who / when / how long, held apart from the quote', () => {
+  const sickBay: ProjectVariation = {
+    id: 'v-sick', project_id: 'p1', description: 'Sick bay — repaint walls + trim',
+    amount: null, status: 'pending', notes: null, created_at: now, created_by: 'u',
+    approved_at: null, approved_by: null,
+  };
+  const corridor: ProjectVariation = {
+    id: 'v-corr', project_id: 'p1', description: 'Corridor B — extra coat',
+    amount: 1450, status: 'approved', notes: null, created_at: now, created_by: 'u',
+    approved_at: now, approved_by: 'u',
+  };
+
+  // Base fixture (18h) plus 6h Jerry + 4h Gavin on the sick bay, 5h Jerry on the corridor.
+  const varTE: TimeEntry[] = [
+    ...te,
+    { ...te[0], id: 'tv1', entry_date: '2026-04-22', hours: 6, task: 'Prep + patch',  variation_id: 'v-sick' },
+    { ...te[1], id: 'tv2', entry_date: '2026-04-21', hours: 4, task: 'Cut-in + trim', variation_id: 'v-sick' },
+    { ...te[0], id: 'tv3', entry_date: '2026-04-23', hours: 5, task: 'Extra coat',    variation_id: 'v-corr' },
+  ];
+  const varME: MaterialEntry[] = [
+    ...me,
+    { ...me[0], id: 'mv1', description: 'Trim enamel', cost: 128.4, variation_id: 'v-sick' },
+  ];
+
+  it('itemises each line — worker, day, hours, what they did', () => {
+    const t = computeVariationTotals(sickBay, varTE, varME, workers);
+    expect(t.lines).toHaveLength(2);
+    // Date-sorted: the 21st comes before the 22nd.
+    expect(t.lines.map((l) => [l.date, l.workerName, l.task, l.hours])).toEqual([
+      ['2026-04-21', 'Gavin', 'Cut-in + trim', 4],
+      ['2026-04-22', 'Jerry', 'Prep + patch', 6],
+    ]);
+  });
+
+  it('rolls up labour, cost, charge-out value and materials per variation', () => {
+    const t = computeVariationTotals(sickBay, varTE, varME, workers);
+    expect(t.labourHours).toBe(10);
+    expect(t.labourCost).toBe(6 * 30 + 4 * 50); // 380
+    expect(t.labourRevenue).toBe(10 * 65); // 650
+    expect(t.materialCost).toBe(128.4);
+    expect(t.materials.map((m) => m.id)).toEqual(['mv1']);
+  });
+
+  it('does not bleed one variation into another', () => {
+    const t = computeVariationTotals(corridor, varTE, varME, workers);
+    expect(t.labourHours).toBe(5);
+    expect(t.materialCost).toBe(0);
+  });
+
+  it('splits project hours into base vs variation', () => {
+    const t = computeProjectTotals(project, varTE, varME, workers, 0, [sickBay, corridor]);
+    expect(t.labourHours).toBe(33); // everything — payroll's view
+    expect(t.baseLabourHours).toBe(18); // the original two entries
+    expect(t.variationLabourHours).toBe(15);
+  });
+
+  it('quoted-hours progress measures base work only — a job that grew is not a job that is late', () => {
+    const t = computeProjectTotals(project, varTE, varME, workers, 0, [sickBay, corridor]);
+    // quoted_hours is 100. 18 base hours = 18%, NOT 33%.
+    expect(t.hoursUsedPct).toBe(18);
+  });
+
+  it('counts unapproved variation work as unbilled, and flags the unpriced ones', () => {
+    const u = computeUnbilledVariationWork([sickBay, corridor], varTE, varME, workers);
+    // Only the pending sick bay counts — the corridor is approved and in the quote.
+    expect(u.variationCount).toBe(1);
+    expect(u.labourHours).toBe(10);
+    expect(u.materialCost).toBe(128.4);
+    expect(u.labourRevenue).toBe(650);
+    expect(u.hasUnpriced).toBe(true);
+  });
+
+  it('a priced-but-unapproved variation is still unbilled, just not unpriced', () => {
+    const priced = { ...sickBay, amount: 900 };
+    const u = computeUnbilledVariationWork([priced], varTE, varME, workers);
+    expect(u.variationCount).toBe(1);
+    expect(u.hasUnpriced).toBe(false);
+  });
+
+  it('ignores pending variations with no work logged against them', () => {
+    const untouched: ProjectVariation = { ...sickBay, id: 'v-none' };
+    const u = computeUnbilledVariationWork([untouched], varTE, varME, workers);
+    expect(u.variationCount).toBe(0);
+    expect(u.labourHours).toBe(0);
+  });
+
+  it('excludes rejected variations — that work is a different problem', () => {
+    const rejected = { ...sickBay, status: 'rejected' as const };
+    const u = computeUnbilledVariationWork([rejected], varTE, varME, workers);
+    expect(u.variationCount).toBe(0);
+  });
+});
+
 describe('Project scopes', () => {
   const scopes: ProjectScope[] = [
     { id: 'sc-ext', project_id: 'p1', name: 'Exterior', quoted_price: 5000, quoted_hours: 50, materials_budget: 800, target_profit: 1000, status: 'active', order_index: 0, notes: null, created_at: now, updated_at: now },
@@ -183,7 +278,7 @@ describe('computeWorkerWeek — cost includes weekly_wage when worker logged hou
   const weekEntries: TimeEntry[] = [
     ...te,
     // Pierce logs 20h on p1
-    { id: 't3', entry_date: '2026-04-20', worker_id: 'w3', project_id: 'p1', hours: 20, task: null, notes: null, scope_id: null, created_by: 'u', ai_source_id: null, created_at: now, updated_at: now },
+    { id: 't3', entry_date: '2026-04-20', worker_id: 'w3', project_id: 'p1', hours: 20, task: null, notes: null, scope_id: null, variation_id: null, created_by: 'u', ai_source_id: null, created_at: now, updated_at: now },
   ];
 
   it('hourly worker: cost = hours × cost_rate', () => {
@@ -207,8 +302,8 @@ describe('computeWeeklyPnL — admin weekly P&L', () => {
   it('rolls up revenue, labour, materials, profit', () => {
     const weekEntries: TimeEntry[] = [
       ...te,
-      { id: 't3', entry_date: '2026-04-20', worker_id: 'w3', project_id: 'p1', hours: 20, task: null, notes: null, scope_id: null, created_by: 'u', ai_source_id: null, created_at: now, updated_at: now },
-      { id: 't4', entry_date: '2026-04-21', worker_id: 'w4', project_id: 'p1', hours: 5,  task: null, notes: null, scope_id: null, created_by: 'u', ai_source_id: null, created_at: now, updated_at: now },
+      { id: 't3', entry_date: '2026-04-20', worker_id: 'w3', project_id: 'p1', hours: 20, task: null, notes: null, scope_id: null, variation_id: null, created_by: 'u', ai_source_id: null, created_at: now, updated_at: now },
+      { id: 't4', entry_date: '2026-04-21', worker_id: 'w4', project_id: 'p1', hours: 5,  task: null, notes: null, scope_id: null, variation_id: null, created_by: 'u', ai_source_id: null, created_at: now, updated_at: now },
     ];
     const p = computeWeeklyPnL(weekEntries, me, workers);
 
@@ -242,7 +337,7 @@ describe('computeTaskBenchmarks — how long tasks generally take', () => {
     hours,
     task,
     notes: null,
-    scope_id: null,
+    scope_id: null, variation_id: null,
     created_by: 'u',
     ai_source_id: null,
     created_at: now,

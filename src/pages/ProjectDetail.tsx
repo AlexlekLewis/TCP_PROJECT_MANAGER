@@ -9,6 +9,7 @@ import {
   DollarSign,
   MoreVertical,
   Pencil,
+  Plus,
   Trash2,
   TrendingUp,
 } from 'lucide-react';
@@ -49,7 +50,7 @@ import {
   useUpdateScope,
 } from '@/hooks/useProjectScopes';
 import { useUpdateProject } from '@/hooks/useProjects';
-import { computeProjectTotals } from '@/lib/aggregations';
+import { computeProjectTotals, computeUnbilledVariationWork } from '@/lib/aggregations';
 import { VariationsSection } from '@/components/features/VariationsSection';
 import { ScopesSection } from '@/components/features/ScopesSection';
 import { formatCurrency } from '@/lib/currency';
@@ -92,6 +93,14 @@ export default function ProjectDetailPage() {
     [project, timeEntries, materials, workers, variations, scopes],
   );
 
+  // Work already done against variations that aren't approved yet — labour and
+  // materials spent with nothing billed against them. Called out prominently
+  // because it's the easiest money on a job to lose track of.
+  const unbilled = useMemo(
+    () => computeUnbilledVariationWork(variations, timeEntries, materials, workers),
+    [variations, timeEntries, materials, workers],
+  );
+
   // Gavin's world is the scoped breakdown. `project.quoted_hours` is Alex's
   // internal (deliberately tighter) target and stays admin-only — the manager
   // sees the sum of scope hours instead.
@@ -130,8 +139,12 @@ export default function ProjectDetailPage() {
     : scopedHours > 0
       ? scopedHours
       : null;
+  // Base-scope hours only. Variation work is billed on top of the quote, so
+  // counting it here would make a job that grew look like a job that's late.
   const hoursUsedPct =
-    plannedHours && plannedHours > 0 ? ((totals?.labourHours ?? 0) / plannedHours) * 100 : null;
+    plannedHours && plannedHours > 0
+      ? ((totals?.baseLabourHours ?? 0) / plannedHours) * 100
+      : null;
 
   return (
     <div className="space-y-6">
@@ -233,8 +246,14 @@ export default function ProjectDetailPage() {
           <StatCard
             label="Labour"
             value={formatCurrency(totals.labourCost, { whole: true })}
-            sub={`${formatHours(totals.labourHours)}${
+            // Base hours against the quote; variation hours called out
+            // separately so an expanded job doesn't read as an overrun.
+            sub={`${formatHours(totals.baseLabourHours)}${
               project.quoted_hours ? ` / ${formatHours(project.quoted_hours)}` : ''
+            }${
+              totals.variationLabourHours > 0
+                ? ` · +${formatHours(totals.variationLabourHours)} variations`
+                : ''
             }`}
             icon={<TrendingUp className="h-4 w-4" />}
           />
@@ -306,14 +325,58 @@ export default function ProjectDetailPage() {
 
       {/* Hours-only summary for manager */}
       {totals && !canSeeFinancials && (
-        <section>
+        <section className="grid gap-3 sm:grid-cols-2">
           <StatCard
-            label="Hours logged"
-            value={formatHours(totals.labourHours)}
+            label="Hours on quoted work"
+            value={formatHours(totals.baseLabourHours)}
             sub={scopedHours > 0 ? `of ${formatHours(scopedHours)} scoped` : undefined}
             icon={<TrendingUp className="h-4 w-4" />}
           />
+          {totals.variationLabourHours > 0 && (
+            <StatCard
+              label="Hours on variations"
+              value={`+${formatHours(totals.variationLabourHours)}`}
+              sub="extra work — on top of the quote"
+              icon={<Plus className="h-4 w-4" />}
+            />
+          )}
         </section>
+      )}
+
+      {/* Work done but not yet billable — the number that's easiest to lose. */}
+      {unbilled.variationCount > 0 && (
+        <div
+          data-testid="unbilled-variation-callout"
+          className="flex items-start gap-3 rounded-md border border-amber-300/50 bg-amber-50 px-3 py-3 text-sm text-amber-900 dark:border-amber-700/40 dark:bg-amber-950/60 dark:text-amber-100"
+        >
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+          <div className="flex-1 space-y-0.5">
+            <p className="font-semibold">Work done, not yet priced</p>
+            <p className="text-xs">
+              {formatHours(unbilled.labourHours)}
+              {unbilled.materialCost > 0 && canSeeFinancials &&
+                ` and ${formatCurrency(unbilled.materialCost)} of materials`}{' '}
+              logged across {unbilled.variationCount}{' '}
+              {unbilled.variationCount === 1 ? 'variation' : 'variations'} the client hasn't
+              approved yet
+              {canSeeFinancials && unbilled.labourRevenue > 0 && (
+                <>
+                  {' '}— worth{' '}
+                  <span className="font-semibold">
+                    {formatCurrency(unbilled.labourRevenue, { whole: true })}
+                  </span>{' '}
+                  at charge-out
+                </>
+              )}
+              .{' '}
+              {canSeeFinancials
+                ? unbilled.hasUnpriced
+                  ? 'Price it below, then approve.'
+                  : 'Chase the sign-off.'
+                : 'Alex still has to price these.'}
+            </p>
+          </div>
+        </div>
       )}
 
       {/* Scopes — multi-area projects with separate priced sections. Both
@@ -339,7 +402,11 @@ export default function ProjectDetailPage() {
           Alex to price + approve. Approved variations roll into total quote. */}
       <VariationsSection
         projectId={project.id}
+        projectName={project.name}
         variations={variations}
+        timeEntries={timeEntries}
+        materialEntries={materials}
+        workers={workers}
         canSeeFinancials={canSeeFinancials}
         onAdd={async (input) => {
           await createVariation.mutateAsync({ project_id: project.id, ...input });
@@ -434,13 +501,32 @@ export default function ProjectDetailPage() {
               <CardContent className="divide-y p-0">
                 {timeEntries.map((e) => {
                   const w = workerById.get(e.worker_id);
+                  // Mark variation hours inline — otherwise the timeline reads
+                  // as one undifferentiated pile and you can't tell which work
+                  // was quoted and which was extra.
+                  const variation = e.variation_id
+                    ? variations.find((v) => v.id === e.variation_id)
+                    : null;
                   return (
                     <div key={e.id} className="flex items-center gap-3 px-4 py-3 text-sm">
                       <div className="w-28 text-xs text-muted-foreground">
                         {format(parseISO(e.entry_date), 'EEE d MMM')}
                       </div>
                       <div className="min-w-0 flex-1">
-                        <p className="font-medium">{w?.name ?? '—'}</p>
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <p className="font-medium">{w?.name ?? '—'}</p>
+                          {e.task && (
+                            <span className="text-xs text-muted-foreground">{e.task}</span>
+                          )}
+                          {variation && (
+                            <span
+                              className="rounded bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-700 dark:text-amber-300"
+                              title={variation.description}
+                            >
+                              Variation
+                            </span>
+                          )}
+                        </div>
                         {e.notes && (
                           <p className="truncate text-xs text-muted-foreground">{e.notes}</p>
                         )}

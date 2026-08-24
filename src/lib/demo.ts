@@ -6,6 +6,7 @@ import type {
   MaterialEntry,
   Profile,
   Project,
+  ProjectVariation,
   TimeEntry,
   VoiceLog,
   WeekLock,
@@ -125,6 +126,7 @@ function mkTimeEntry(
   hours: number,
   notes: string | null = null,
   task: string | null = null,
+  variationId: string | null = null,
 ): TimeEntry {
   const d = iso(addDays(monday, dayOffset));
   return {
@@ -133,6 +135,7 @@ function mkTimeEntry(
     worker_id: workerId,
     project_id: projectId,
     scope_id: null,
+    variation_id: variationId,
     hours,
     task,
     notes,
@@ -142,6 +145,42 @@ function mkTimeEntry(
     updated_at: iso(today),
   };
 }
+
+/**
+ * Client variations on Northcote — the flow this exists for: the school asks
+ * for extra work mid-job, Gavin logs it unpriced, the crew works on it, and
+ * Alex needs to see who did what before he can put a number on it.
+ *
+ * `var-sickbay` is deliberately left unpriced + pending with hours already
+ * against it: that's the "work done, not yet priced" state the project page
+ * calls out. `var-corridor` is the finished shape — priced and approved.
+ */
+export const DEMO_VARIATIONS: ProjectVariation[] = [
+  {
+    id: 'var-sickbay',
+    project_id: 'p-northcote',
+    description: 'Sick bay — repaint walls + trim',
+    amount: null,
+    status: 'pending',
+    notes: 'Asked for by the facilities manager on site Thursday. Not in the original quote.',
+    created_at: iso(addDays(monday, -2)),
+    created_by: DEMO_MANAGER_ID,
+    approved_at: null,
+    approved_by: null,
+  },
+  {
+    id: 'var-corridor',
+    project_id: 'p-northcote',
+    description: 'Corridor B — extra coat over graffiti patches',
+    amount: 1450,
+    status: 'approved',
+    notes: 'Signed off by DET on the 3rd.',
+    created_at: iso(addDays(monday, -9)),
+    created_by: DEMO_USER_ID,
+    approved_at: iso(addDays(monday, -7)),
+    approved_by: DEMO_USER_ID,
+  },
+];
 
 export const DEMO_TIME_ENTRIES: TimeEntry[] = [
   // Monday — Jerry split across two tasks on Northcote
@@ -166,6 +205,15 @@ export const DEMO_TIME_ENTRIES: TimeEntry[] = [
   mkTimeEntry('t13', 2, 'w-jerry', 'p-preston', 2, null, 'sanding window'),
   mkTimeEntry('t14', 1, 'w-pierce', 'p-northcote', 4, null, 'Gap filling skirts'),
   mkTimeEntry('t15', 2, 'w-gavin', 'p-preston', 3.5, null, 'Gap filling skirts'),
+  // Variation work — extra scope the school added. These hours are billed on
+  // top of the quote, so they stay out of the quoted-hours progress bar.
+  // Deliberately parked on Thu/Fri, which carry no base entries: the Mon–Wed
+  // tallies are what the soft-cap e2e suite asserts against (Jerry's 10h on
+  // Northcote vs the 8h cap), and variation hours shouldn't disturb them.
+  mkTimeEntry('t16', 3, 'w-jerry', 'p-northcote', 6, null, 'Prep + patch', 'var-sickbay'),
+  mkTimeEntry('t17', 3, 'w-pierce', 'p-northcote', 4.5, null, 'Two coats', 'var-sickbay'),
+  mkTimeEntry('t18', 4, 'w-gavin', 'p-northcote', 2, null, 'Cut-in + trim', 'var-sickbay'),
+  mkTimeEntry('t19', 4, 'w-jerry', 'p-northcote', 5, null, 'Extra coat', 'var-corridor'),
 ];
 
 export const DEMO_MATERIAL_ENTRIES: MaterialEntry[] = [
@@ -177,6 +225,7 @@ export const DEMO_MATERIAL_ENTRIES: MaterialEntry[] = [
     cost: 340,
     supplier: 'Haymes Paint',
     scope_id: null,
+    variation_id: null,
     created_by: DEMO_MANAGER_ID,
     ai_source_id: null,
     created_at: iso(today),
@@ -189,6 +238,7 @@ export const DEMO_MATERIAL_ENTRIES: MaterialEntry[] = [
     cost: 185,
     supplier: 'Bunnings',
     scope_id: null,
+    variation_id: null,
     created_by: DEMO_MANAGER_ID,
     ai_source_id: null,
     created_at: iso(today),
@@ -201,6 +251,20 @@ export const DEMO_MATERIAL_ENTRIES: MaterialEntry[] = [
     cost: 92.5,
     supplier: 'Bunnings',
     scope_id: null,
+    variation_id: null,
+    created_by: DEMO_MANAGER_ID,
+    ai_source_id: null,
+    created_at: iso(today),
+  },
+  {
+    id: 'm4',
+    entry_date: iso(addDays(monday, 3)),
+    project_id: 'p-northcote',
+    description: 'Haymes low sheen x 4L + trim enamel (sick bay)',
+    cost: 128.4,
+    supplier: 'Haymes Paint',
+    scope_id: null,
+    variation_id: 'var-sickbay',
     created_by: DEMO_MANAGER_ID,
     ai_source_id: null,
     created_at: iso(today),

@@ -19,6 +19,7 @@ Mobile-first internal tool for a 4-person painting crew: log daily labour hours 
 - [ADR 003 — Claude voice parse](docs/decisions/003-claude-voice-parse.md)
 - [ADR 004 — Deployment topology](docs/decisions/004-deployment.md)
 - [ADR 005 — Manager scopes/variations + hours editing](docs/decisions/005-manager-scopes-variations.md)
+- [ADR 006 — Variation labour (who/when/how many hours per variation)](docs/decisions/006-variation-labour.md)
 - [CHANGELOG](CHANGELOG.md) — append-only session log
 
 ## Stack (shipped)
@@ -30,7 +31,7 @@ Mobile-first internal tool for a 4-person painting crew: log daily labour hours 
 - **AI**: Anthropic Claude Haiku 4.5 via Supabase Edge Function `parse-voice-log`
 - **Voice**: Web Speech API (browser-native, on-device)
 - **Hosting**: Vercel
-- **Testing**: Vitest (unit) — 33 green · Playwright (E2E smoke)
+- **Testing**: Vitest (unit) — 89 green · Playwright (E2E smoke)
 - **CI**: GitHub Actions (lint + typecheck + test + build + secret-scan + Playwright)
 
 ## Data model (Postgres)
@@ -39,8 +40,17 @@ Tables: `profiles`, `workers`, `projects`, `time_entries`, `material_entries`, `
 
 Plus `project_scopes` + `project_variations` (child tables under `projects`).
 
+Time + material entries carry an optional `scope_id` (a priced area of the base
+quote) **or** an optional `variation_id` (extra work the client added mid-job) —
+never both. See [ADR 006](docs/decisions/006-variation-labour.md).
+
 Key invariants enforced by RLS / triggers (not UI):
 - `time_entries.hours` CHECK between 0 and 14 (inclusive).
+- `scope_id` and `variation_id` are mutually exclusive (CHECK on both entry
+  tables), and a trigger rejects an entry whose variation belongs to a different
+  project. Hours are logged once: a variation hour is still a payroll hour, but
+  it is excluded from the project's quoted-hours progress because it is billed
+  on top of the quote.
 - Manager cannot INSERT/UPDATE/DELETE entries inside a locked week. In an *unlocked* week the manager may edit + delete any entry (used by the on-site "fix a mistake" flow).
 - Admin writes inside locked weeks are allowed but write to `audit_log` via trigger.
 - Manager (Gavin) is financially blind: he can add scopes (hours only) + edit them, and log unpriced `pending` variations, but the $ columns are forced null/preserved by triggers and masked on read (`*_visible` views). Scope delete, variation pricing + approval are admin-only. See [ADR 005](docs/decisions/005-manager-scopes-variations.md).
@@ -81,7 +91,8 @@ src/
   main.tsx                Providers (Query, Router, Auth, Toaster, ErrorBoundary)
   components/ui/          shadcn-style primitives
   components/layout/      AppLayout (top bar, mobile nav, floating mic)
-  components/features/    DayEntryDialog, ProjectForm, VoiceReview
+  components/features/    DayEntryDialog, ProjectForm, VoiceReview,
+                          ScopesSection, VariationsSection
   context/AuthContext.tsx
   hooks/                  TanStack Query hooks per entity + useVoiceLog
   lib/                    supabase, env, dates (Mon-start), currency (AUD),

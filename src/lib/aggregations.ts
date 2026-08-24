@@ -13,7 +13,16 @@ import { cleanTask, mostFrequent, taskKey } from './tasks';
 // =============================================================================
 
 export interface ProjectTotals {
+  /** Every hour on the job — base scope + variations. Payroll's view. */
   labourHours: number;
+  /**
+   * Hours against the original quote (entries with no `variation_id`). This is
+   * what the quoted-hours progress bar measures: a job that grew because the
+   * client added work shouldn't read as a job that's blowing its budget.
+   */
+  baseLabourHours: number;
+  /** Hours against client variations — extra work, billed on top of the quote. */
+  variationLabourHours: number;
   /** Internal labour cost: Σ (hours × worker.cost_rate). */
   labourCost: number;
   /** What we'd bill at charge-out rates: Σ (hours × worker.charge_out_rate). */
@@ -57,6 +66,10 @@ export function computeProjectTotals(
   const projectME = materialEntries.filter((m) => m.project_id === project.id);
 
   const labourHours = projectTE.reduce((s, t) => s + Number(t.hours), 0);
+  const baseLabourHours = projectTE
+    .filter((t) => t.variation_id == null)
+    .reduce((s, t) => s + Number(t.hours), 0);
+  const variationLabourHours = labourHours - baseLabourHours;
   const labourCost = projectTE.reduce(
     (s, t) => s + Number(t.hours) * (costRateById.get(t.worker_id) ?? 0),
     0,
@@ -104,9 +117,11 @@ export function computeProjectTotals(
     profitHealth = projectedProfit >= 0 ? 'on_track' : 'over_budget';
   }
 
+  // Base hours only — variation work is billed on top of the quote, so
+  // counting it here would make a job that grew look like a job that's late.
   const hoursUsedPct =
     project.quoted_hours && project.quoted_hours > 0
-      ? (labourHours / project.quoted_hours) * 100
+      ? (baseLabourHours / project.quoted_hours) * 100
       : null;
   const materialsUsedPct =
     project.materials_budget && project.materials_budget > 0
@@ -115,6 +130,8 @@ export function computeProjectTotals(
 
   return {
     labourHours: round2(labourHours),
+    baseLabourHours: round2(baseLabourHours),
+    variationLabourHours: round2(variationLabourHours),
     labourCost: round2(labourCost),
     labourRevenue: round2(labourRevenue),
     materialCost: round2(materialCost),
@@ -300,6 +317,137 @@ export function computeScopeTotals(
     projectedProfit: round2(projectedProfit),
     quoteProfit: quoteProfit != null ? round2(quoteProfit) : null,
     hoursUsedPct: hoursUsedPct != null ? round2(hoursUsedPct) : null,
+  };
+}
+
+// =============================================================================
+// Per-variation rollup (used inside ProjectDetail's Variations section)
+// =============================================================================
+
+/**
+ * One line of work done against a variation — the itemised record Alex needs
+ * to price and invoice it: who, what day, how long, and what they did.
+ */
+export interface VariationLine {
+  id: string;
+  date: string;
+  workerId: string;
+  workerName: string;
+  task: string | null;
+  notes: string | null;
+  hours: number;
+  /** hours × cost_rate. Admin-only in the UI. */
+  cost: number;
+  /** hours × charge_out_rate — what this line is worth billed out. Admin-only. */
+  revenue: number;
+}
+
+export interface VariationTotals {
+  labourHours: number;
+  labourCost: number;
+  labourRevenue: number;
+  materialCost: number;
+  /** Date-sorted labour lines — the ledger rendered on screen and exported. */
+  lines: VariationLine[];
+  /** Material purchases tagged to this variation, oldest first. */
+  materials: MaterialEntry[];
+}
+
+/**
+ * Roll up everything logged against one variation. Mirrors computeScopeTotals,
+ * but also returns the individual lines — a variation's whole point is the
+ * itemised "who did what, when" record, not just a total.
+ */
+export function computeVariationTotals(
+  variation: ProjectVariation,
+  timeEntries: TimeEntry[],
+  materialEntries: MaterialEntry[],
+  workers: Worker[],
+): VariationTotals {
+  const workerById = new Map(workers.map((w) => [w.id, w]));
+  const varTE = timeEntries.filter((t) => t.variation_id === variation.id);
+  const varME = materialEntries
+    .filter((m) => m.variation_id === variation.id)
+    .sort((a, b) => a.entry_date.localeCompare(b.entry_date));
+
+  const lines: VariationLine[] = varTE
+    .map((t) => {
+      const w = workerById.get(t.worker_id);
+      const hours = Number(t.hours);
+      return {
+        id: t.id,
+        date: t.entry_date,
+        workerId: t.worker_id,
+        workerName: w?.name ?? '—',
+        task: t.task,
+        notes: t.notes,
+        hours: round2(hours),
+        cost: round2(hours * Number(w?.cost_rate ?? 0)),
+        revenue: round2(hours * Number(w?.charge_out_rate ?? 0)),
+      };
+    })
+    .sort((a, b) => a.date.localeCompare(b.date) || a.workerName.localeCompare(b.workerName));
+
+  return {
+    labourHours: round2(lines.reduce((s, l) => s + l.hours, 0)),
+    labourCost: round2(lines.reduce((s, l) => s + l.cost, 0)),
+    labourRevenue: round2(lines.reduce((s, l) => s + l.revenue, 0)),
+    materialCost: round2(varME.reduce((s, m) => s + Number(m.cost), 0)),
+    lines,
+    materials: varME,
+  };
+}
+
+export interface UnbilledVariationWork {
+  /** How many variations have work logged but aren't approved yet. */
+  variationCount: number;
+  labourHours: number;
+  materialCost: number;
+  /** What the unbilled hours are worth at charge-out. Admin-only in the UI. */
+  labourRevenue: number;
+  /** True when any of it sits on a variation Alex hasn't put a price on yet. */
+  hasUnpriced: boolean;
+}
+
+/**
+ * Work the crew has already done against variations that aren't approved yet —
+ * either still unpriced, or priced but awaiting client sign-off. Until a
+ * variation is approved it isn't in the quote, so this is labour and materials
+ * spent with nothing billed against them. Surfaced prominently because it's the
+ * easiest money on a job to lose track of.
+ *
+ * Rejected variations are excluded — that work is never going to be billed, so
+ * it's a different (and worse) problem, flagged on the variation row itself.
+ */
+export function computeUnbilledVariationWork(
+  variations: ProjectVariation[],
+  timeEntries: TimeEntry[],
+  materialEntries: MaterialEntry[],
+  workers: Worker[],
+): UnbilledVariationWork {
+  const pending = variations.filter((v) => v.status === 'pending');
+  let variationCount = 0;
+  let labourHours = 0;
+  let materialCost = 0;
+  let labourRevenue = 0;
+  let hasUnpriced = false;
+
+  for (const v of pending) {
+    const t = computeVariationTotals(v, timeEntries, materialEntries, workers);
+    if (t.labourHours === 0 && t.materialCost === 0) continue;
+    variationCount += 1;
+    labourHours += t.labourHours;
+    materialCost += t.materialCost;
+    labourRevenue += t.labourRevenue;
+    if (v.amount == null) hasUnpriced = true;
+  }
+
+  return {
+    variationCount,
+    labourHours: round2(labourHours),
+    materialCost: round2(materialCost),
+    labourRevenue: round2(labourRevenue),
+    hasUnpriced,
   };
 }
 

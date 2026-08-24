@@ -23,11 +23,13 @@ export default function WeekCalendarPage() {
   // on the manager landing).
   const [seedWorkerId, setSeedWorkerId] = useState<string | undefined>(undefined);
   const [seedProjectId, setSeedProjectId] = useState<string | undefined>(undefined);
+  const [seedVariationId, setSeedVariationId] = useState<string | undefined>(undefined);
   const [searchParams, setSearchParams] = useSearchParams();
 
   // Allow other pages to deep-link here with ?log=today | ?log=<YYYY-MM-DD>
-  // (+ optional ?worker=ID&project=ID) and have the entry dialog auto-open
-  // + pre-fill.
+  // (+ optional ?worker=ID&project=ID&variation=ID) and have the entry dialog
+  // auto-open + pre-fill. `variation` is used by "Log time" on a variation row,
+  // so the crew never has to find it in the picker.
   useEffect(() => {
     const logParam = searchParams.get('log');
     if (logParam) {
@@ -42,10 +44,12 @@ export default function WeekCalendarPage() {
         setAnchor(new Date(targetIso + 'T12:00:00'));
         setSeedWorkerId(searchParams.get('worker') ?? undefined);
         setSeedProjectId(searchParams.get('project') ?? undefined);
+        setSeedVariationId(searchParams.get('variation') ?? undefined);
         const next = new URLSearchParams(searchParams);
         next.delete('log');
         next.delete('worker');
         next.delete('project');
+        next.delete('variation');
         setSearchParams(next, { replace: true });
       }
     }
@@ -201,6 +205,7 @@ export default function WeekCalendarPage() {
         }}
         initialWorkerId={seedWorkerId}
         initialProjectId={seedProjectId}
+        initialVariationId={seedVariationId}
       />
     </div>
   );
