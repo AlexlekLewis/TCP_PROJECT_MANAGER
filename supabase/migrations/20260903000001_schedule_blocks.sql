@@ -67,7 +67,11 @@ begin
 end;
 $$;
 
-revoke execute on function sync_project_schedule_envelope() from anon, authenticated;
+-- `create function` grants EXECUTE to PUBLIC by default, and revoking from
+-- anon/authenticated alone leaves that grant in place — which would keep the
+-- trigger function reachable at /rest/v1/rpc/. Same treatment as
+-- 20260522000002_lock_down_definer_function_exposure.sql.
+revoke execute on function sync_project_schedule_envelope() from public, anon, authenticated;
 
 create trigger project_schedule_blocks_sync_envelope
   after insert or update or delete on project_schedule_blocks
