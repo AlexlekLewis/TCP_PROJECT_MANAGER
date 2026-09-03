@@ -6,6 +6,23 @@ Format: one section per session, newest on top. Each entry: what changed, why, f
 
 ---
 
+## 2026-09-03 (one screen) — calendar and what's on, side by side
+
+Alex, after using it: "one thing that I don't like is multiple screens for the sake of multiple screens. When I open the schedule, I want to see the calendar and I want to be able to have the jobs that are coming up to the side… pretend a 12-year-old needs to be able to use the system."
+
+That last sentence is now a standing rule for every app in this account, saved to memory: assume a 12-year-old, prefer one screen over several, prefer direct manipulation that saves itself.
+
+- **One screen** ([Timeline.tsx](src/pages/Timeline.tsx)) — the board and the job list are now a two-column grid (`xl:grid-cols-[minmax(0,1fr)_18rem]`) instead of two stacked cards you had to scroll between. The list is sticky, so it stays put while you drag. Below `xl` it stacks, which is right on a phone. Zoom presets moved up into the header row beside Today/‹/›, so every control is on one line.
+- **Four groups became one list** ([schedule.ts](src/lib/schedule.ts)) — `bucketJobs` (on site / next 30 days / further out / unscheduled) is replaced by `listJobs`, returning one chronological list plus the undated ones. The board beside it already shows *when*; the list only has to answer *what's next*. Each row reads "on site · finishes in 2 days" or "starts in 18 days" in plain words.
+- **Plainer words** — "Jobs ahead" → "What's on", "Not on the calendar yet" → "No dates yet", "Schedule" button → "Add", and the three-sentence drag hint became one line that ends "It saves as you go" — because it does, and that wasn't obvious.
+- **Fixed an inconsistency the side-by-side layout exposed** — a split job showed its *next part's* dates but the *envelope's* finish, so Northcote read "17 Aug – 5 Sep" and "done in 39 days" at once. The status is now derived from whatever span is displayed, so the two always agree.
+- **Fixed a dead style** — the overdue chip used `text-warning-foreground`, which isn't a token in this theme (only `warning` is), so it rendered as default body text. Now `text-destructive`.
+- **Tests** — 149 unit green (`listJobs` replaces the `bucketJobs` suite, +1 case for stable tie-breaking); e2e updated for the new copy and layout, including a case asserting the board and the list are both present without navigating. Full Playwright suite **151 passed**. Added `data-testid="whats-on"` rather than filtering on `div` text, which is what broke first.
+
+**Two e2e gotchas worth remembering.** `getByRole(..., { name: 'Add' })` matches by *substring* by default, so it also caught the five "Add another part to …" buttons — needs `exact: true`. And `locator('div').filter({ hasText: /^What's on/ }).last()` resolves to the innermost matching div (the card title), not the card; scope with a test id instead.
+
+---
+
 ## 2026-09-03 (schedule parts) — a job that stops and comes back
 
 Alex, on seeing the board: "I don't mind it dragging over two pixels because we should be able to edit manually with a free text. The duration of a job… part A or part B of a job… because jobs can often start, then go away, then come back."

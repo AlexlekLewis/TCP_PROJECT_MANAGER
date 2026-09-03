@@ -322,54 +322,59 @@ export interface ScheduledJob {
   durationDays: number;
   /** Days until the end date; negative once it has run over. */
   endsInDays: number;
+  /** Started and not finished — the crew is on it today. */
+  onSite: boolean;
 }
 
-export interface JobBuckets {
-  /** Started, not yet finished — sorted by finish date (soonest first). */
-  onSite: ScheduledJob[];
-  /** Not started yet, within the horizon — sorted by start date. */
-  upcoming: ScheduledJob[];
-  /** Starts beyond the horizon. */
-  later: ScheduledJob[];
-  /** Missing a start or end date, so they can't be plotted. */
+export interface JobList {
+  /**
+   * Everything not yet finished, in the order it happens. Deliberately one
+   * list rather than on-site / soon / later buckets — the board beside it
+   * already shows *when*, so the list only has to answer *what's next*.
+   */
+  jobs: ScheduledJob[];
+  /** Missing dates, so they can't be plotted at all. */
   unscheduled: Project[];
 }
 
 /**
- * Split the non-archived projects into the buckets the "Upcoming jobs" panel
- * renders. `horizonDays` matches the current zoom, so the list answers the
- * same question the board is showing.
+ * The side panel's contents: live jobs in date order, plus the ones with no
+ * dates yet. Finished jobs drop out entirely — this panel is about what's
+ * ahead, not a history.
  */
-export function bucketJobs(projects: Project[], today: Date, horizonDays: number): JobBuckets {
+export function listJobs(projects: Project[], today: Date): JobList {
   const todayIso = toISODate(today);
-  const buckets: JobBuckets = { onSite: [], upcoming: [], later: [], unscheduled: [] };
+  const jobs: ScheduledJob[] = [];
+  const unscheduled: Project[] = [];
 
   for (const project of projects) {
     if (project.status === 'archived') continue;
     if (!project.start_date || !project.end_date) {
-      buckets.unscheduled.push(project);
+      unscheduled.push(project);
       continue;
     }
-    const startsInDays = differenceInCalendarDays(parseISO(project.start_date), today);
-    const endsInDays = differenceInCalendarDays(parseISO(project.end_date), today);
-    const job: ScheduledJob = {
+    if (project.end_date < todayIso) continue; // finished
+    jobs.push({
       project,
-      startsInDays,
-      endsInDays,
+      startsInDays: differenceInCalendarDays(parseISO(project.start_date), today),
+      endsInDays: differenceInCalendarDays(parseISO(project.end_date), today),
       durationDays:
         differenceInCalendarDays(parseISO(project.end_date), parseISO(project.start_date)) + 1,
-    };
-    if (project.end_date < todayIso) continue; // finished — not "upcoming"
-    if (project.start_date <= todayIso) buckets.onSite.push(job);
-    else if (startsInDays <= horizonDays) buckets.upcoming.push(job);
-    else buckets.later.push(job);
+      onSite: project.start_date <= todayIso,
+    });
   }
 
-  buckets.onSite.sort((a, b) => a.endsInDays - b.endsInDays);
-  buckets.upcoming.sort((a, b) => a.startsInDays - b.startsInDays);
-  buckets.later.sort((a, b) => a.startsInDays - b.startsInDays);
-  buckets.unscheduled.sort((a, b) => a.name.localeCompare(b.name));
-  return buckets;
+  // Chronological. Jobs already running sort first because they started first,
+  // which is also how the crew reads it: what's on, then what's next.
+  jobs.sort((a, b) =>
+    a.project.start_date === b.project.start_date
+      ? a.project.name.localeCompare(b.project.name)
+      : a.project.start_date! < b.project.start_date!
+        ? -1
+        : 1,
+  );
+  unscheduled.sort((a, b) => a.name.localeCompare(b.name));
+  return { jobs, unscheduled };
 }
 
 /**

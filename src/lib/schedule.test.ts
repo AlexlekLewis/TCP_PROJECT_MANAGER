@@ -3,7 +3,7 @@ import { parseISO } from 'date-fns';
 import {
   applyDrag,
   barGeometry,
-  bucketJobs,
+  listJobs,
   buildMonthBands,
   buildTicks,
   daysFromPx,
@@ -230,7 +230,7 @@ describe('applyDrag', () => {
   });
 });
 
-describe('bucketJobs', () => {
+describe('listJobs', () => {
   const today = parseISO('2026-06-15');
   const projects = [
     project({ id: 'running', start_date: '2026-06-10', end_date: '2026-06-20' }),
@@ -240,48 +240,78 @@ describe('bucketJobs', () => {
     project({ id: 'later', start_date: '2026-11-02', end_date: '2026-11-20' }),
     project({ id: 'done', start_date: '2026-05-01', end_date: '2026-06-14' }),
     project({ id: 'no-dates' }),
-    project({ id: 'archived', status: 'archived', start_date: '2026-06-22', end_date: '2026-06-30' }),
+    project({
+      id: 'archived',
+      status: 'archived',
+      start_date: '2026-06-22',
+      end_date: '2026-06-30',
+    }),
   ];
 
-  const b = bucketJobs(projects, today, 35);
+  const { jobs, unscheduled } = listJobs(projects, today);
+
+  it('is one chronological list, not buckets', () => {
+    expect(jobs.map((j) => j.project.id)).toEqual([
+      'running-late',
+      'running',
+      'starts-today',
+      'soon',
+      'later',
+    ]);
+  });
 
   it('counts a job starting today as on site', () => {
-    expect(b.onSite.map((j) => j.project.id)).toEqual(['running', 'starts-today', 'running-late']);
+    expect(jobs.filter((j) => j.onSite).map((j) => j.project.id)).toEqual([
+      'running-late',
+      'running',
+      'starts-today',
+    ]);
   });
 
-  it('sorts on-site jobs by soonest finish', () => {
-    expect(b.onSite[0].project.id).toBe('running');
+  it('does not include jobs that have finished', () => {
+    expect(jobs.map((j) => j.project.id)).not.toContain('done');
   });
 
-  it('puts jobs inside the horizon in upcoming and the rest in later', () => {
-    expect(b.upcoming.map((j) => j.project.id)).toEqual(['soon']);
-    expect(b.later.map((j) => j.project.id)).toEqual(['later']);
+  it('keeps a job running over its end date on the list', () => {
+    const over = listJobs(
+      [project({ id: 'over', start_date: '2026-06-01', end_date: '2026-06-15' })],
+      today,
+    );
+    expect(over.jobs[0].endsInDays).toBe(0);
+    expect(over.jobs[0].onSite).toBe(true);
   });
 
-  it('drops finished jobs entirely', () => {
-    const all = [...b.onSite, ...b.upcoming, ...b.later].map((j) => j.project.id);
-    expect(all).not.toContain('done');
+  it('excludes archived projects from both lists', () => {
+    expect(jobs.map((j) => j.project.id)).not.toContain('archived');
+    expect(unscheduled.map((p) => p.id)).not.toContain('archived');
   });
 
-  it('excludes archived projects from every bucket', () => {
-    const all = [...b.onSite, ...b.upcoming, ...b.later].map((j) => j.project.id);
-    expect(all).not.toContain('archived');
-    expect(b.unscheduled.map((p) => p.id)).not.toContain('archived');
-  });
-
-  it('collects date-less projects as unscheduled', () => {
-    expect(b.unscheduled.map((p) => p.id)).toEqual(['no-dates']);
-  });
-
-  it('reports inclusive duration and relative offsets', () => {
-    const soon = b.upcoming[0];
-    expect(soon.startsInDays).toBe(7);
-    expect(soon.durationDays).toBe(9); // 22nd–30th inclusive
+  it('collects date-less projects separately', () => {
+    expect(unscheduled.map((p) => p.id)).toEqual(['no-dates']);
   });
 
   it('treats a project missing only an end date as unscheduled', () => {
-    const b2 = bucketJobs([project({ id: 'half', start_date: '2026-06-20' })], today, 35);
-    expect(b2.unscheduled.map((p) => p.id)).toEqual(['half']);
+    const half = listJobs([project({ id: 'half', start_date: '2026-06-20' })], today);
+    expect(half.unscheduled.map((p) => p.id)).toEqual(['half']);
+    expect(half.jobs).toHaveLength(0);
+  });
+
+  it('reports inclusive duration and relative offsets', () => {
+    const soon = jobs.find((j) => j.project.id === 'soon')!;
+    expect(soon.startsInDays).toBe(7);
+    expect(soon.durationDays).toBe(9); // 22nd–30th inclusive
+    expect(soon.onSite).toBe(false);
+  });
+
+  it('breaks same-start ties on name so the order is stable', () => {
+    const tied = listJobs(
+      [
+        project({ id: 'b', name: 'Zebra', start_date: '2026-07-01', end_date: '2026-07-05' }),
+        project({ id: 'a', name: 'Apple', start_date: '2026-07-01', end_date: '2026-07-05' }),
+      ],
+      today,
+    );
+    expect(tied.jobs.map((j) => j.project.name)).toEqual(['Apple', 'Zebra']);
   });
 });
 

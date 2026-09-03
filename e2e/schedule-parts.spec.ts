@@ -15,11 +15,13 @@ test.describe('Schedule parts', () => {
     await expect(page.getByText('2 parts').first()).toBeVisible();
   });
 
-  test('the jobs-ahead list names the next part, not just the envelope', async ({ page }) => {
+  test('the side list shows the next part, not the whole envelope', async ({ page }) => {
     await page.goto('/timeline');
-    await expect(
-      page.getByText(/2 parts · next: Term 3 — B & C blocks/),
-    ).toBeVisible();
+    // Northcote runs 17 Aug – 12 Oct across two parts. Showing the envelope
+    // would read as eight solid weeks, so the list names the next block and
+    // its status has to agree with those dates.
+    await expect(page.getByText(/17 Aug – 5 Sep · Term 3 — B & C blocks/)).toBeVisible();
+    await expect(page.getByText(/12 Oct/).first()).toHaveCount(1);
   });
 
   test('clicking a bar opens the editor and dates can be typed in', async ({ page }) => {
@@ -108,9 +110,9 @@ test.describe('Schedule parts', () => {
     await dialog.getByRole('button', { name: 'Remove' }).click();
 
     await expect(page.getByRole('button', { name: /Belmore School,/ })).toHaveCount(0);
-    // It reappears in the unscheduled list, ready to be put back.
+    // It reappears under "No dates yet", ready to be put back.
     const unscheduled = page
-      .locator('h3', { hasText: /Not on the calendar yet/i })
+      .locator('h3', { hasText: /No dates yet/i })
       .locator('xpath=following-sibling::ul[1]');
     await expect(unscheduled.getByText('Belmore School')).toBeVisible();
   });
@@ -143,6 +145,7 @@ test.describe('Schedule parts', () => {
     await page.goto('/timeline');
     await page.getByTestId('role-manager').click();
     await expect(page.getByRole('button', { name: /Add another part to/ })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Add', exact: true })).toHaveCount(0);
     // Clicking a bar opens the job rather than the editor.
     await page.getByRole('button', { name: /Northcote High School, Term 3/ }).click();
     await expect(page).toHaveURL(/\/projects\/p-northcote/);

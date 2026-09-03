@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { addDays, format, parseISO } from 'date-fns';
+import { addDays, differenceInCalendarDays, format, parseISO } from 'date-fns';
 import {
   CalendarPlus,
   ChevronLeft,
@@ -8,7 +8,6 @@ import {
   GanttChartSquare,
   GripVertical,
   Hammer,
-  Info,
   Plus,
 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -35,7 +34,7 @@ import { formatHours } from '@/lib/hours';
 import {
   applyDrag,
   barGeometry,
-  bucketJobs,
+  listJobs,
   buildMonthBands,
   buildTicks,
   daysFromPx,
@@ -50,6 +49,7 @@ import {
   splitPart,
   type DragMode,
   type ScaleId,
+  type JobList,
   type ScheduledJob,
   type Span,
 } from '@/lib/schedule';
@@ -188,12 +188,12 @@ export default function TimelinePage() {
       });
   }, [projects, partsFor, spanOf, rangeStart, totalDays]);
 
-  const buckets = useMemo(
-    () => bucketJobs(projects, today, totalDays),
+  const jobList = useMemo(
+    () => listJobs(projects, today),
     // `today` is a fresh Date each render; key off the ISO day instead so this
     // doesn't recompute on every paint.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [projects, totalDays, toISODate(today)],
+    [projects, toISODate(today)],
   );
 
   const hoursPctById = useMemo(() => {
@@ -289,7 +289,7 @@ export default function TimelinePage() {
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-2">
         <h1 className="flex items-center gap-2 text-xl font-semibold tracking-tight">
           <GanttChartSquare className="h-5 w-5" /> Schedule
@@ -297,7 +297,22 @@ export default function TimelinePage() {
         <Badge variant="secondary">
           {format(rangeStart, 'd MMM')} – {format(rangeEnd, 'd MMM yyyy')}
         </Badge>
-        <div className="ml-auto flex gap-1">
+
+        <div className="ml-auto flex flex-wrap items-center gap-1">
+          {/* How far ahead the board looks. */}
+          <div className="mr-2 flex gap-1" role="group" aria-label="How far ahead to show">
+            {SCALES.map((sc) => (
+              <Button
+                key={sc.id}
+                size="sm"
+                variant={sc.id === scaleId ? 'default' : 'outline'}
+                aria-pressed={sc.id === scaleId}
+                onClick={() => setScaleId(sc.id)}
+              >
+                {sc.label}
+              </Button>
+            ))}
+          </div>
           <Button
             variant="outline"
             size="sm"
@@ -320,57 +335,37 @@ export default function TimelinePage() {
         </div>
       </div>
 
-      {/* Zoom — how far ahead the underlay reaches. */}
-      <div className="flex flex-wrap items-center gap-1" role="group" aria-label="Timeline range">
-        <span className="mr-1 text-xs uppercase tracking-wide text-muted-foreground">
-          Looking ahead
-        </span>
-        {SCALES.map((s) => (
-          <Button
-            key={s.id}
-            size="sm"
-            variant={s.id === scaleId ? 'default' : 'outline'}
-            aria-pressed={s.id === scaleId}
-            onClick={() => setScaleId(s.id)}
-          >
-            {s.label}
-          </Button>
-        ))}
+      {/* One screen: the calendar, and what's coming up beside it. */}
+      <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_18rem]">
+        <div className="min-w-0 space-y-2">
+          <ScheduleBoard
+            rows={rows}
+            spanOf={spanOf}
+            rangeStart={rangeStart}
+            totalDays={totalDays}
+            tick={scale.tick}
+            snapDays={scale.snapDays}
+            editable={editable}
+            hoursPctById={hoursPctById}
+            onCommit={commitDrag}
+            onEdit={setEditing}
+            onAddPart={addPart}
+          />
+          {editable && rows.length > 0 && (
+            <p className="px-1 text-xs text-muted-foreground">
+              Drag a bar to move it. Drag its ends to make it longer or shorter. Click it to type
+              the dates. It saves as you go.
+            </p>
+          )}
+        </div>
+
+        <UpcomingJobs
+          list={jobList}
+          partsFor={partsFor}
+          editable={editable}
+          onSchedule={addPart}
+        />
       </div>
-
-      <ScheduleBoard
-        rows={rows}
-        spanOf={spanOf}
-        rangeStart={rangeStart}
-        totalDays={totalDays}
-        tick={scale.tick}
-        snapDays={scale.snapDays}
-        editable={editable}
-        hoursPctById={hoursPctById}
-        onCommit={commitDrag}
-        onEdit={setEditing}
-        onAddPart={addPart}
-      />
-
-      {editable && rows.length > 0 && (
-        <p className="flex items-start gap-1.5 text-xs text-muted-foreground">
-          <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-          <span>
-            Drag a bar to move it, drag either end to change its length, or click it to type the
-            dates in.
-            {scale.snapDays > 1 && ' Dragging snaps to whole weeks at this range — click the bar for exact days.'}{' '}
-            A job that stops and comes back can be split into parts.
-          </span>
-        </p>
-      )}
-
-      <UpcomingJobs
-        buckets={buckets}
-        partsFor={partsFor}
-        editable={editable}
-        horizonLabel={scale.label}
-        onSchedule={addPart}
-      />
 
       <ThisWeekSchedule />
 
@@ -456,9 +451,9 @@ function ScheduleBoard({
     return (
       <Card>
         <CardContent className="py-12 text-center text-sm text-muted-foreground">
-          No jobs scheduled in this window.
+          Nothing booked in these dates.
           <p className="mt-2 text-xs">
-            Widen the range above, or put a job on the calendar from the list below.
+            Try a longer range, or add a job from the list beside this one.
           </p>
         </CardContent>
       </Card>
@@ -469,7 +464,7 @@ function ScheduleBoard({
     <Card className="overflow-hidden">
       <CardContent className="p-0">
         <div className="overflow-x-auto">
-          <div className="min-w-[760px]">
+          <div className="min-w-[620px]">
             {/* Header — month band, then the finer tick row */}
             <div className="flex border-b bg-muted/40">
               <div className={cn(LABEL_COL, 'border-r px-3 py-2')}>
@@ -883,87 +878,66 @@ function ResizeHandle({
   );
 }
 
-// --- Upcoming jobs --------------------------------------------------------
+// --- What's coming up (side panel) ---------------------------------------
 
 function UpcomingJobs({
-  buckets,
+  list,
   partsFor,
   editable,
-  horizonLabel,
   onSchedule,
 }: {
-  buckets: ReturnType<typeof bucketJobs>;
+  list: JobList;
   partsFor: Map<string, ProjectScheduleBlock[]>;
   editable: boolean;
-  horizonLabel: string;
   onSchedule: (p: Project) => void;
 }) {
-  const { onSite, upcoming, later, unscheduled } = buckets;
+  const { jobs, unscheduled } = list;
 
   return (
-    <Card>
-      <CardHeader className="pb-3">
+    <Card data-testid="whats-on" className="xl:sticky xl:top-20">
+      <CardHeader className="pb-2">
         <CardTitle className="flex items-center gap-2 text-base">
-          <Hammer className="h-4 w-4" /> Jobs ahead
+          <Hammer className="h-4 w-4" /> What's on
         </CardTitle>
       </CardHeader>
-      <CardContent className="space-y-5 pt-0">
-        <JobGroup
-          title="On site now"
-          empty="Nothing running today."
-          jobs={onSite}
-          partsFor={partsFor}
-          note={(j) =>
-            j.endsInDays < 0
-              ? `over by ${Math.abs(j.endsInDays)} days`
-              : `finishes ${relativeDayLabel(j.endsInDays)}`
-          }
-          overdue={(j) => j.endsInDays < 0}
-        />
-
-        <JobGroup
-          title={`Starting in the next ${horizonLabel.toLowerCase()}`}
-          empty="Nothing booked in this window."
-          jobs={upcoming}
-          partsFor={partsFor}
-          note={(j) => `starts ${relativeDayLabel(j.startsInDays)}`}
-        />
-
-        {later.length > 0 && (
-          <JobGroup
-            title="Further out"
-            empty=""
-            jobs={later}
-            partsFor={partsFor}
-            note={(j) => format(parseISO(j.project.start_date!), 'd MMM yyyy')}
-          />
+      <CardContent className="space-y-4 pt-0">
+        {jobs.length === 0 ? (
+          <p className="text-sm text-muted-foreground">No jobs booked.</p>
+        ) : (
+          <ul className="-mx-2 divide-y">
+            {jobs.map((j) => (
+              <JobRow key={j.project.id} job={j} parts={partsFor.get(j.project.id) ?? []} />
+            ))}
+          </ul>
         )}
 
         {unscheduled.length > 0 && (
           <div>
-            <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-              Not on the calendar yet
+            <h3 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              No dates yet
             </h3>
-            <p className="mb-2 text-xs text-muted-foreground">
-              These have no dates, so they can't be plotted.
-              {editable && ' Put one on next week and drag it to where it belongs.'}
-            </p>
-            <ul className="divide-y rounded-md border">
+            <ul className="-mx-2 divide-y">
               {unscheduled.map((p) => (
-                <li key={p.id} className="flex items-center gap-3 px-3 py-2">
+                <li key={p.id} className="flex items-center gap-2 px-2 py-2">
                   <span
                     className="h-2.5 w-2.5 shrink-0 rounded-full"
                     style={{ background: p.color_tag ?? FALLBACK_COLOR }}
                   />
                   <Link
                     to={`/projects/${p.id}`}
-                    className="flex-1 truncate text-sm font-medium hover:underline"
+                    className="min-w-0 flex-1 truncate text-sm font-medium hover:underline"
                   >
                     {p.name}
                   </Link>
                   {editable && (
-                    <Button size="sm" variant="outline" onClick={() => onSchedule(p)}>
-                      <CalendarPlus className="h-3.5 w-3.5" /> Schedule
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-7 shrink-0 px-2 text-xs"
+                      onClick={() => onSchedule(p)}
+                      title={`Put ${p.name} on the calendar`}
+                    >
+                      <CalendarPlus className="h-3.5 w-3.5" /> Add
                     </Button>
                   )}
                 </li>
@@ -976,78 +950,57 @@ function UpcomingJobs({
   );
 }
 
-function JobGroup({
-  title,
-  empty,
-  jobs,
-  partsFor,
-  note,
-  overdue,
-}: {
-  title: string;
-  empty: string;
-  jobs: ScheduledJob[];
-  partsFor: Map<string, ProjectScheduleBlock[]>;
-  note: (j: ScheduledJob) => string;
-  overdue?: (j: ScheduledJob) => boolean;
-}) {
-  if (jobs.length === 0 && !empty) return null;
-  const todayIso = toISODate(new Date());
+function JobRow({ job, parts }: { job: ScheduledJob; parts: ProjectScheduleBlock[] }) {
+  const { project } = job;
+  const today = new Date();
+  const todayIso = toISODate(today);
+
+  // A split job's envelope is misleading on its own — "17 Aug to 12 Oct" reads
+  // as eight solid weeks. Show the next block of work instead, and read the
+  // status off *that*, so the dates and the "finishes in…" always agree.
+  const nextPart = parts.length > 1 ? parts.find((b) => b.end_date >= todayIso) : undefined;
+  const nextIndex = nextPart ? parts.indexOf(nextPart) : -1;
+  const start = nextPart?.start_date ?? project.start_date!;
+  const end = nextPart?.end_date ?? project.end_date!;
+
+  const startsInDays = differenceInCalendarDays(parseISO(start), today);
+  const endsInDays = differenceInCalendarDays(parseISO(end), today);
+  const onSite = start <= todayIso;
 
   return (
-    <div>
-      <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-        {title}
-      </h3>
-      {jobs.length === 0 ? (
-        <p className="text-sm text-muted-foreground">{empty}</p>
-      ) : (
-        <ul className="divide-y rounded-md border">
-          {jobs.map((j) => {
-            const parts = partsFor.get(j.project.id) ?? [];
-            // For a split job the envelope is misleading on its own — "17 Aug
-            // to 12 Oct" reads as eight solid weeks. Name the next block of
-            // work so the gap is visible in the list too.
-            const nextPart = parts.find((b) => b.end_date >= todayIso);
-            const nextIndex = nextPart ? parts.indexOf(nextPart) : -1;
-            return (
-              <li key={j.project.id}>
-                <Link
-                  to={`/projects/${j.project.id}`}
-                  className="flex items-center gap-3 px-3 py-2.5 hover:bg-accent"
-                >
-                  <span
-                    className="h-2.5 w-2.5 shrink-0 rounded-full"
-                    style={{ background: j.project.color_tag ?? FALLBACK_COLOR }}
-                  />
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-medium">{j.project.name}</p>
-                    <p className="truncate text-xs text-muted-foreground">
-                      {format(parseISO(j.project.start_date!), 'd MMM')} –{' '}
-                      {format(parseISO(j.project.end_date!), 'd MMM')} · {j.durationDays} days
-                      {j.project.client_name ? ` · ${j.project.client_name}` : ''}
-                    </p>
-                    {parts.length > 1 && nextPart && (
-                      <p className="truncate text-xs text-muted-foreground">
-                        <span className="font-medium text-foreground/70">
-                          {parts.length} parts
-                        </span>{' '}
-                        · next: {partLabel(nextPart, nextIndex)},{' '}
-                        {format(parseISO(nextPart.start_date), 'd MMM')} –{' '}
-                        {format(parseISO(nextPart.end_date), 'd MMM')}
-                      </p>
-                    )}
-                  </div>
-                  <Badge variant={overdue?.(j) ? 'warning' : 'secondary'} className="shrink-0">
-                    {note(j)}
-                  </Badge>
-                </Link>
-              </li>
-            );
-          })}
-        </ul>
-      )}
-    </div>
+    <li>
+      <Link
+        to={`/projects/${project.id}`}
+        className="flex items-start gap-2 rounded px-2 py-2 hover:bg-accent"
+      >
+        <span
+          className="mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full"
+          style={{ background: project.color_tag ?? FALLBACK_COLOR }}
+        />
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-sm font-medium">{project.name}</p>
+          <p className="truncate text-xs text-muted-foreground">
+            {format(parseISO(start), 'd MMM')} – {format(parseISO(end), 'd MMM')}
+            {nextPart ? ` · ${partLabel(nextPart, nextIndex)}` : ''}
+          </p>
+          <p className="mt-0.5 text-xs">
+            {endsInDays < 0 ? (
+              <span className="font-medium text-destructive">
+                over by {Math.abs(endsInDays)} days
+              </span>
+            ) : onSite ? (
+              <span className="font-medium text-foreground/70">
+                on site · finishes {relativeDayLabel(endsInDays)}
+              </span>
+            ) : (
+              <span className="text-muted-foreground">
+                starts {relativeDayLabel(startsInDays)}
+              </span>
+            )}
+          </p>
+        </div>
+      </Link>
+    </li>
   );
 }
 

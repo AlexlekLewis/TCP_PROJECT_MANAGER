@@ -62,13 +62,21 @@ test.describe('Schedule board', () => {
     await expect(rangeBadge).toHaveText(thirtyDays ?? '');
   });
 
-  test('lists the jobs ahead with on-site and upcoming groups', async ({ page }) => {
+  test('shows the calendar and what\'s on together, on one screen', async ({ page }) => {
     await page.goto('/timeline');
-    await expect(page.getByText('Jobs ahead')).toBeVisible();
-    await expect(page.getByRole('heading', { name: /On site now/i })).toBeVisible();
-    // Demo fixtures put Northcote in progress today.
-    const onSite = page.locator('h3', { hasText: /On site now/i }).locator('xpath=following-sibling::ul[1]');
-    await expect(onSite.getByText('Northcote High School')).toBeVisible();
+    // Both the board and the side list must be present without navigating.
+    await expect(page.getByRole('button', { name: /Northcote High School,/ }).first()).toBeVisible();
+    const panel = page.getByTestId('whats-on');
+    await expect(panel).toBeVisible();
+    await expect(panel.getByText('Northcote High School')).toBeVisible();
+    await expect(panel.getByText(/on site · finishes in/).first()).toBeVisible();
+  });
+
+  test('undated jobs sit under "No dates yet" with an Add button', async ({ page }) => {
+    await page.goto('/timeline');
+    await expect(page.getByRole('heading', { name: /No dates yet/i })).toBeVisible();
+    await expect(page.getByText('Fitzroy Warehouse Fitout')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Add', exact: true })).toBeVisible();
   });
 
   test('dragging a bar reschedules the job', async ({ page, isMobile }) => {
@@ -110,8 +118,8 @@ test.describe('Schedule board', () => {
     await page.goto('/timeline');
     await page.getByTestId('role-manager').click();
     await expect(page.getByRole('heading', { name: /Schedule/i })).toBeVisible();
-    // The drag hint is admin-only.
-    await expect(page.getByText(/Drag a bar to move the job/i)).toHaveCount(0);
-    await expect(page.getByRole('button', { name: /^Schedule$/ })).toHaveCount(0);
+    // The drag hint and the scheduling controls are admin-only.
+    await expect(page.getByText(/Drag a bar to move it/i)).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Add', exact: true })).toHaveCount(0);
   });
 });
