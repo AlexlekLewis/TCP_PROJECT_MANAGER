@@ -20,6 +20,7 @@ Mobile-first internal tool for a 4-person painting crew: log daily labour hours 
 - [ADR 004 — Deployment topology](docs/decisions/004-deployment.md)
 - [ADR 005 — Manager scopes/variations + hours editing](docs/decisions/005-manager-scopes-variations.md)
 - [ADR 006 — Variation labour (who/when/how many hours per variation)](docs/decisions/006-variation-labour.md)
+- [ADR 007 — Schedule board (drag/resize jobs, 30d–12m underlay)](docs/decisions/007-schedule-board.md)
 - [CHANGELOG](CHANGELOG.md) — append-only session log
 
 ## Stack (shipped)
@@ -31,7 +32,7 @@ Mobile-first internal tool for a 4-person painting crew: log daily labour hours 
 - **AI**: Anthropic Claude Haiku 4.5 via Supabase Edge Function `parse-voice-log`
 - **Voice**: Web Speech API (browser-native, on-device)
 - **Hosting**: Vercel
-- **Testing**: Vitest (unit) — 89 green · Playwright (E2E smoke)
+- **Testing**: Vitest (unit) — 125 green · Playwright (E2E smoke)
 - **CI**: GitHub Actions (lint + typecheck + test + build + secret-scan + Playwright)
 
 ## Data model (Postgres)
@@ -53,6 +54,10 @@ Key invariants enforced by RLS / triggers (not UI):
   on top of the quote.
 - Manager cannot INSERT/UPDATE/DELETE entries inside a locked week. In an *unlocked* week the manager may edit + delete any entry (used by the on-site "fix a mistake" flow).
 - Admin writes inside locked weeks are allowed but write to `audit_log` via trigger.
+- Project `start_date` / `end_date` are the **schedule**, editable by drag on
+  `/timeline` (admin only — `projects` is admin-write under RLS). Scheduling is
+  a plan and is entirely independent of logged time: moving a bar never touches
+  a time entry, and week locks don't apply. See [ADR 007](docs/decisions/007-schedule-board.md).
 - Manager (Gavin) is financially blind: he can add scopes (hours only) + edit them, and log unpriced `pending` variations, but the $ columns are forced null/preserved by triggers and masked on read (`*_visible` views). Scope delete, variation pricing + approval are admin-only. See [ADR 005](docs/decisions/005-manager-scopes-variations.md).
 - Service-role key never touches user-input code paths.
 
@@ -98,9 +103,11 @@ src/
   lib/                    supabase, env, dates (Mon-start), currency (AUD),
                           hours (14h cap), fuzzyMatch, aggregations,
                           claudePrompt (shared with Edge Function),
-                          voiceParser, demo + demoStore, csv
-  pages/                  Dashboard, WeekCalendar, Projects, ProjectDetail,
-                          Workers, VoiceLog, Reports, Admin, Login
+                          voiceParser, demo + demoStore, csv,
+                          schedule (board geometry + drag maths)
+  pages/                  Dashboard, WeekCalendar, Timeline, Projects,
+                          ProjectDetail, Workers, VoiceLog, Reports, Admin,
+                          Login
   routes/guards.tsx       RequireAuth, RequireRole
 
 supabase/

@@ -20,7 +20,7 @@ import type { Role } from '@/types/db';
 const nav: Array<{ to: string; label: string; icon: React.ReactNode; role?: Role }> = [
   { to: '/', label: 'Dashboard', icon: <LayoutDashboard className="h-4 w-4" /> },
   { to: '/calendar', label: 'Week', icon: <CalendarDays className="h-4 w-4" /> },
-  { to: '/timeline', label: 'Timeline', icon: <GanttChartSquare className="h-4 w-4" /> },
+  { to: '/timeline', label: 'Schedule', icon: <GanttChartSquare className="h-4 w-4" /> },
   { to: '/projects', label: 'Projects', icon: <FolderKanban className="h-4 w-4" /> },
   { to: '/reports', label: 'Reports', icon: <BarChart3 className="h-4 w-4" /> },
   { to: '/workers', label: 'Workers', icon: <Users className="h-4 w-4" />, role: 'admin' },

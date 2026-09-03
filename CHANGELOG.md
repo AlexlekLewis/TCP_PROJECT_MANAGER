@@ -6,6 +6,24 @@ Format: one section per session, newest on top. Each entry: what changed, why, f
 
 ---
 
+## 2026-09-03 (schedule board) — move jobs around the calendar, see 30 days to 12 months
+
+Alex: "a list of upcoming jobs, and a way to modulate and move around on the calendar and resize, and create an underlay of what my next 30 to 60 or 12 months looks like depending on what size of the work I want."
+
+`/timeline` plotted dated projects as Gantt bars but was read-only, hard-coded to a ten-week window, and the only way to change a job's dates was to open the project form and type them. Rescheduling is a spatial judgement — *does this fit between those two jobs* — so the board is now the editing surface. Full rationale in **[ADR 007](docs/decisions/007-schedule-board.md)**.
+
+- **Drag to move, drag either end to resize** ([Timeline.tsx](src/pages/Timeline.tsx)) — pointer-capture drags on each bar; move preserves duration, edge drags move one edge and can't invert the job. Drop commits `start_date`/`end_date` and raises a toast with **Undo** (10s, longer than sonner's 4s default — a fat-fingered drag is exactly what that button is for). Commits are optimistic: the dropped span is held locally until the server echoes it, or the bar snaps back for one refetch and reads as a failed drag. Arrow keys nudge a focused bar, Shift+arrow stretches it.
+- **Four zoom presets — 30d · 60d · 6m · 12m** — each a whole number of weeks (35/63/182/364) so Monday gridlines stay true at every level. The underlay changes density with the range: day columns + weekend shading at 30d, week columns at 60d, alternating month bands at 6m/12m. Drags snap to **whole weeks** at 6m/12m, where a pixel is ~2 days and day precision would be a lie; the hint text says so when it applies.
+- **"Jobs ahead" panel** — on site now (sorted by soonest finish, flagging jobs past their end date), starting within the current horizon, further out, and **not on the calendar yet**. This is the view that works on a phone; the board is a desk tool. Undated jobs get a one-click **Schedule** that drops them on next Mon–Fri so they can be dragged into place.
+- **New pure module** ([schedule.ts](src/lib/schedule.ts)) — scales, month bands, tick rows, `barGeometry`, `daysFromPx`, `applyDrag`, `bucketJobs`. All the fiddly arithmetic lives here so it's testable without rendering: **36 new unit tests**, 125 green total. Deliberately no calendar dependency — react-big-calendar/FullCalendar are day-grid *event* calendars, the opposite shape to one-row-per-job spanning months.
+- **Manager stays read-only** — `projects` is admin-write under RLS (`projects_admin_write`), so Gavin gets the same board and list without drag handles; a drag he could start would 403 on drop. Clicking a bar opens the job for both roles.
+- **Nav label `Timeline` → `Schedule`** (route `/timeline` unchanged, so existing links still resolve).
+- **Demo** ([demo.ts](src/lib/demo.ts)) — every fixture was already running or finished, so the new panel had nothing to show. Added *Brunswick Terrace Repaint* (starts in 3 weeks) and *Fitzroy Warehouse Fitout* (won, no dates yet).
+- **Responsive gutter** — the label column was a fixed 11rem, half a 375px screen. Now `w-32 md:w-44`, with the underlay and today line pinned to the same offset.
+- **Tests** — 125 unit green; [e2e/timeline.spec.ts](e2e/timeline.spec.ts) rewritten to 10 cases covering zoom, drag, arrow-key nudge and the manager's read-only board (drag/keyboard cases skipped on the mobile project). Full Playwright suite **119 passed**. Verified live in demo mode: dragged Northcote +5 days (duration held at 43), Undo restored it, resized the end back 5 days, scheduled Fitzroy onto the board, and confirmed a manager drag is a no-op while a manager click still opens the job.
+
+**One real bug found and fixed during verification.** The track width was measured in a `useLayoutEffect` with `[]` deps — but on first paint the projects query is still empty, so the board renders its empty state and the track node doesn't exist. The effect measured `null` once and never ran again, leaving `trackWidth` at 0 and **every drag worth zero days**. Now a callback ref, which fires whenever the node mounts.
+
 ## 2026-08-20 (variation labour) — who did the sick bay, what day, how many hours
 
 Alex: "when clients add variations to the jobs we need to be able to itemize and describe those variations and then add ours to those variations… who was the person that worked on that job, what day was that job done, how many hours were executed on that job, and you have to describe the job."
