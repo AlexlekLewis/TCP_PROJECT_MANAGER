@@ -6,6 +6,45 @@ Format: one section per session, newest on top. Each entry: what changed, why, f
 
 ---
 
+## 2026-09-03 (schedule parts) — a job that stops and comes back
+
+Alex, on seeing the board: "I don't mind it dragging over two pixels because we should be able to edit manually with a free text. The duration of a job… part A or part B of a job… because jobs can often start, then go away, then come back."
+
+One job = one continuous bar was wrong. A school is painted across a term and the following holidays; a repaint stops for three weeks waiting on colours or scaffold. The old model made a job that *paused* for six weeks look identical to one that *ran* for six weeks, hiding the gap the crew is actually free in. Full rationale in **[ADR 008](docs/decisions/008-schedule-parts.md)**.
+
+- **Migration** ([20260903000001_schedule_blocks.sql](supabase/migrations/20260903000001_schedule_blocks.sql)) — new `project_schedule_blocks` (label, start, end, optional `scope_id`, order), a `CHECK` that `end_date >= start_date`, and a `SECURITY DEFINER` trigger keeping `projects.start_date`/`end_date` as the **derived envelope** (earliest start, latest finish). That's what made this cheap: every existing reader keeps working against the same two columns, unchanged. Backfills one part per already-dated project. RLS mirrors `projects` — everyone reads, only admin writes.
+- **Verified against real Postgres** — applied the migration to a local Supabase and exercised it: envelope follows part insert/update/delete and collapses to null when the last part goes, `end < start` is rejected, project delete cascades its parts, and the manager can read parts but gets 0 rows / an RLS violation on update, insert and delete while the admin succeeds.
+- **Type the dates in** ([SchedulePartDialog.tsx](src/components/features/SchedulePartDialog.tsx)) — clicking a bar opens an editor with both dates, a free-text name, a live duration readout, Split and Remove. This is the precision path: at 6- and 12-month zooms a drag snaps to whole weeks, and it shouldn't be the only way to set a date. Save stays disabled until something changes and while the dates are invalid.
+- **Split** — cuts a part in two at its midpoint, leaving the first half put and the second half ready to drag to whenever the job resumes. The "goes away and comes back" flow in one action.
+- **Board renders one bar per part** ([Timeline.tsx](src/pages/Timeline.tsx)) — each independently draggable and resizable; dragging one leaves its siblings alone. Unnamed parts read "Part A", "Part B"… by calendar order. The row header shows "2 parts" instead of the client, the hours-burn `%` sits only on the last part, and a hover `+` adds another part the week after the job currently finishes.
+- **Parts are a *when*, scopes are a *what*** — `scope_id` on a part is nullable and unenforced. The same scope can be visited twice and one visit can cover several scopes, so reusing `project_scopes` for this would have been wrong.
+- **Jobs ahead names the next part** — "17 Aug – 30 Oct · 75 days" alone reads as eleven solid weeks, so a split job also shows "2 parts · next: Term 3 — B & C blocks, 17 Aug – 5 Sep".
+- **The project form stops pretending** ([ProjectForm.tsx](src/components/features/ProjectForm.tsx)) — for a single-part job its date fields now write **through** to that part (otherwise the trigger would silently overwrite whatever was typed); for a split job there's no single start and end, so it lists the parts read-only and links to the board. Also gave those two date inputs real `htmlFor`/`id` associations — they had none, so screen readers couldn't announce them.
+- **Demo** ([demo.ts](src/lib/demo.ts)) — Northcote is split across a term and the holidays, so the gap is visible out of the box. Fixture envelopes are derived from the parts the same way the trigger does it, so they can't drift.
+- **Tests** — 148 unit green (23 new part helpers: labels past Z, calendar ordering, envelope across a gap, split refusing to make an empty part); new [e2e/schedule-parts.spec.ts](e2e/schedule-parts.spec.ts) (12 cases) covering the split render, type-in editing, validation, rename, split, per-part drag isolation, add, removing the last part, both project-form paths and the manager's read-only board. Full Playwright suite **149 passed**.
+
+**Worth knowing for future e2e work.** A test that changed data in the project form and then re-checked it on the board failed — not a bug: demo mode holds its data in memory, and `page.goto()` is a full reload that resets the fixtures. Cross-page assertions in demo mode have to navigate in-app.
+
+---
+
+## 2026-09-03 (schedule board) — move jobs around the calendar, see 30 days to 12 months
+
+Alex: "a list of upcoming jobs, and a way to modulate and move around on the calendar and resize, and create an underlay of what my next 30 to 60 or 12 months looks like depending on what size of the work I want."
+
+`/timeline` plotted dated projects as Gantt bars but was read-only, hard-coded to a ten-week window, and the only way to change a job's dates was to open the project form and type them. Rescheduling is a spatial judgement — *does this fit between those two jobs* — so the board is now the editing surface. Full rationale in **[ADR 007](docs/decisions/007-schedule-board.md)**.
+
+- **Drag to move, drag either end to resize** ([Timeline.tsx](src/pages/Timeline.tsx)) — pointer-capture drags on each bar; move preserves duration, edge drags move one edge and can't invert the job. Drop commits `start_date`/`end_date` and raises a toast with **Undo** (10s, longer than sonner's 4s default — a fat-fingered drag is exactly what that button is for). Commits are optimistic: the dropped span is held locally until the server echoes it, or the bar snaps back for one refetch and reads as a failed drag. Arrow keys nudge a focused bar, Shift+arrow stretches it.
+- **Four zoom presets — 30d · 60d · 6m · 12m** — each a whole number of weeks (35/63/182/364) so Monday gridlines stay true at every level. The underlay changes density with the range: day columns + weekend shading at 30d, week columns at 60d, alternating month bands at 6m/12m. Drags snap to **whole weeks** at 6m/12m, where a pixel is ~2 days and day precision would be a lie; the hint text says so when it applies.
+- **"Jobs ahead" panel** — on site now (sorted by soonest finish, flagging jobs past their end date), starting within the current horizon, further out, and **not on the calendar yet**. This is the view that works on a phone; the board is a desk tool. Undated jobs get a one-click **Schedule** that drops them on next Mon–Fri so they can be dragged into place.
+- **New pure module** ([schedule.ts](src/lib/schedule.ts)) — scales, month bands, tick rows, `barGeometry`, `daysFromPx`, `applyDrag`, `bucketJobs`. All the fiddly arithmetic lives here so it's testable without rendering: **36 new unit tests**, 125 green total. Deliberately no calendar dependency — react-big-calendar/FullCalendar are day-grid *event* calendars, the opposite shape to one-row-per-job spanning months.
+- **Manager stays read-only** — `projects` is admin-write under RLS (`projects_admin_write`), so Gavin gets the same board and list without drag handles; a drag he could start would 403 on drop. Clicking a bar opens the job for both roles.
+- **Nav label `Timeline` → `Schedule`** (route `/timeline` unchanged, so existing links still resolve).
+- **Demo** ([demo.ts](src/lib/demo.ts)) — every fixture was already running or finished, so the new panel had nothing to show. Added *Brunswick Terrace Repaint* (starts in 3 weeks) and *Fitzroy Warehouse Fitout* (won, no dates yet).
+- **Responsive gutter** — the label column was a fixed 11rem, half a 375px screen. Now `w-32 md:w-44`, with the underlay and today line pinned to the same offset.
+- **Tests** — 125 unit green; [e2e/timeline.spec.ts](e2e/timeline.spec.ts) rewritten to 10 cases covering zoom, drag, arrow-key nudge and the manager's read-only board (drag/keyboard cases skipped on the mobile project). Full Playwright suite **119 passed**. Verified live in demo mode: dragged Northcote +5 days (duration held at 43), Undo restored it, resized the end back 5 days, scheduled Fitzroy onto the board, and confirmed a manager drag is a no-op while a manager click still opens the job.
+
+**One real bug found and fixed during verification.** The track width was measured in a `useLayoutEffect` with `[]` deps — but on first paint the projects query is still empty, so the board renders its empty state and the track node doesn't exist. The effect measured `null` once and never ran again, leaving `trackWidth` at 0 and **every drag worth zero days**. Now a callback ref, which fires whenever the node mounts.
+
 ## 2026-08-20 (variation labour) — who did the sick bay, what day, how many hours
 
 Alex: "when clients add variations to the jobs we need to be able to itemize and describe those variations and then add ours to those variations… who was the person that worked on that job, what day was that job done, how many hours were executed on that job, and you have to describe the job."

@@ -1,4 +1,6 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
+import { format, parseISO } from 'date-fns';
 import { toast } from 'sonner';
 import {
   Dialog,
@@ -19,7 +21,13 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { useCreateProject, useUpdateProject } from '@/hooks/useProjects';
+import {
+  useCreateScheduleBlock,
+  useScheduleBlocks,
+  useUpdateScheduleBlock,
+} from '@/hooks/useScheduleBlocks';
 import { useAuth } from '@/context/AuthContext';
+import { partLabel, sortParts } from '@/lib/schedule';
 import type { Project, ProjectStatus, QuoteType } from '@/types/db';
 
 interface Props {
@@ -44,7 +52,53 @@ export function ProjectForm({ open, onClose, project }: Props) {
   const isAdmin = role === 'admin';
   const create = useCreateProject();
   const update = useUpdateProject();
+  const createPart = useCreateScheduleBlock();
+  const updatePart = useUpdateScheduleBlock();
+  const { data: allBlocks = [] } = useScheduleBlocks();
   const [form, setForm] = useState<Partial<Project>>(() => project ?? defaultForm(isAdmin));
+
+  // Scheduling lives in `project_schedule_blocks` now — `projects.start_date`
+  // / `end_date` are a trigger-maintained envelope over them. So these inputs
+  // have to write through to a part, or the next part edit would silently
+  // overwrite whatever was typed here.
+  const parts = useMemo(
+    () => (project ? sortParts(allBlocks.filter((b) => b.project_id === project.id)) : []),
+    [allBlocks, project],
+  );
+  // Once a job is split, "the start date" isn't a single editable thing — the
+  // board is the only place that can express it.
+  const splitJob = parts.length > 1;
+
+  /**
+   * Push the form's dates into the project's single schedule part, creating or
+   * removing it as needed. Only called for jobs that aren't split — see
+   * `splitJob`.
+   */
+  const syncSinglePart = async (projectId: string) => {
+    const existing = parts[0];
+    const start = form.start_date ?? null;
+    const end = form.end_date ?? null;
+    if (start && end) {
+      if (existing) {
+        if (existing.start_date !== start || existing.end_date !== end) {
+          await updatePart.mutateAsync({
+            id: existing.id,
+            patch: { start_date: start, end_date: end },
+          });
+        }
+      } else {
+        await createPart.mutateAsync({
+          project_id: projectId,
+          label: null,
+          start_date: start,
+          end_date: end,
+          scope_id: null,
+          order_index: 0,
+          notes: null,
+        });
+      }
+    }
+  };
 
   const submit = async () => {
     if (!form.name) {
@@ -54,15 +108,17 @@ export function ProjectForm({ open, onClose, project }: Props) {
     try {
       if (isEdit) {
         await update.mutateAsync({ id: project!.id, patch: form });
+        if (!splitJob) await syncSinglePart(project!.id);
         toast.success('Project updated');
       } else {
         // Manager-created projects are always drafts requiring admin review.
         const payload = isAdmin
           ? form
           : { ...form, needs_admin_review: true, quote_type: 'fixed_quote' as QuoteType };
-        await create.mutateAsync(
+        const created = await create.mutateAsync(
           payload as Omit<Project, 'id' | 'created_at' | 'updated_at'>,
         );
+        if (created && isAdmin) await syncSinglePart(created.id);
         toast.success(
           isAdmin
             ? 'Project created'
@@ -256,24 +312,51 @@ export function ProjectForm({ open, onClose, project }: Props) {
             </div>
           )}
 
-          {isAdmin && (
+          {isAdmin && !splitJob && (
             <div className="grid gap-4 md:grid-cols-2">
               <div className="space-y-1.5">
-                <Label>Start date</Label>
+                <Label htmlFor="project-start-date">Start date</Label>
                 <Input
+                  id="project-start-date"
                   type="date"
                   value={form.start_date ?? ''}
                   onChange={(e) => setForm({ ...form, start_date: e.target.value || null })}
                 />
               </div>
               <div className="space-y-1.5">
-                <Label>Expected end</Label>
+                <Label htmlFor="project-end-date">Expected end</Label>
                 <Input
+                  id="project-end-date"
                   type="date"
                   value={form.end_date ?? ''}
                   onChange={(e) => setForm({ ...form, end_date: e.target.value || null })}
                 />
               </div>
+            </div>
+          )}
+
+          {isAdmin && splitJob && (
+            <div className="space-y-1.5">
+              <Label>Schedule</Label>
+              <ul className="divide-y rounded-md border text-sm">
+                {parts.map((b, i) => (
+                  <li key={b.id} className="flex items-center justify-between px-3 py-2">
+                    <span className="truncate font-medium">{partLabel(b, i)}</span>
+                    <span className="shrink-0 tabular-nums text-muted-foreground">
+                      {format(parseISO(b.start_date), 'd MMM')} –{' '}
+                      {format(parseISO(b.end_date), 'd MMM yyyy')}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+              <p className="text-xs text-muted-foreground">
+                This job runs in {parts.length} parts, so there's no single start and end to
+                type here. Move them on the{' '}
+                <Link to="/timeline" className="underline" onClick={onClose}>
+                  Schedule board
+                </Link>
+                .
+              </p>
             </div>
           )}
 

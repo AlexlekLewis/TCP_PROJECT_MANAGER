@@ -20,6 +20,8 @@ Mobile-first internal tool for a 4-person painting crew: log daily labour hours 
 - [ADR 004 — Deployment topology](docs/decisions/004-deployment.md)
 - [ADR 005 — Manager scopes/variations + hours editing](docs/decisions/005-manager-scopes-variations.md)
 - [ADR 006 — Variation labour (who/when/how many hours per variation)](docs/decisions/006-variation-labour.md)
+- [ADR 007 — Schedule board (drag/resize jobs, 30d–12m underlay)](docs/decisions/007-schedule-board.md)
+- [ADR 008 — Schedule parts (a job as several date blocks)](docs/decisions/008-schedule-parts.md)
 - [CHANGELOG](CHANGELOG.md) — append-only session log
 
 ## Stack (shipped)
@@ -31,14 +33,15 @@ Mobile-first internal tool for a 4-person painting crew: log daily labour hours 
 - **AI**: Anthropic Claude Haiku 4.5 via Supabase Edge Function `parse-voice-log`
 - **Voice**: Web Speech API (browser-native, on-device)
 - **Hosting**: Vercel
-- **Testing**: Vitest (unit) — 89 green · Playwright (E2E smoke)
+- **Testing**: Vitest (unit) — 148 green · Playwright (E2E smoke)
 - **CI**: GitHub Actions (lint + typecheck + test + build + secret-scan + Playwright)
 
 ## Data model (Postgres)
 
 Tables: `profiles`, `workers`, `projects`, `time_entries`, `material_entries`, `voice_logs`, `week_locks`, `audit_log`, `settings`. Full schema + RLS in [supabase/migrations/](supabase/migrations).
 
-Plus `project_scopes` + `project_variations` (child tables under `projects`).
+Plus `project_scopes`, `project_variations` + `project_schedule_blocks` (child
+tables under `projects`).
 
 Time + material entries carry an optional `scope_id` (a priced area of the base
 quote) **or** an optional `variation_id` (extra work the client added mid-job) —
@@ -53,6 +56,14 @@ Key invariants enforced by RLS / triggers (not UI):
   on top of the quote.
 - Manager cannot INSERT/UPDATE/DELETE entries inside a locked week. In an *unlocked* week the manager may edit + delete any entry (used by the on-site "fix a mistake" flow).
 - Admin writes inside locked weeks are allowed but write to `audit_log` via trigger.
+- Scheduling lives in `project_schedule_blocks` — a job is a **set of parts**
+  ("Part A", "Part B"…), because jobs stop and come back. `projects.start_date`
+  / `end_date` are a trigger-maintained **envelope** over the parts (earliest
+  start, latest finish): read them freely, but schedule by writing parts or the
+  trigger will overwrite you. Admin-write only, under RLS. Scheduling is a plan
+  and is entirely independent of logged time: moving a bar never touches a time
+  entry, and week locks don't apply. See [ADR 007](docs/decisions/007-schedule-board.md)
+  + [ADR 008](docs/decisions/008-schedule-parts.md).
 - Manager (Gavin) is financially blind: he can add scopes (hours only) + edit them, and log unpriced `pending` variations, but the $ columns are forced null/preserved by triggers and masked on read (`*_visible` views). Scope delete, variation pricing + approval are admin-only. See [ADR 005](docs/decisions/005-manager-scopes-variations.md).
 - Service-role key never touches user-input code paths.
 
@@ -92,15 +103,17 @@ src/
   components/ui/          shadcn-style primitives
   components/layout/      AppLayout (top bar, mobile nav, floating mic)
   components/features/    DayEntryDialog, ProjectForm, VoiceReview,
-                          ScopesSection, VariationsSection
+                          ScopesSection, VariationsSection, SchedulePartDialog
   context/AuthContext.tsx
   hooks/                  TanStack Query hooks per entity + useVoiceLog
   lib/                    supabase, env, dates (Mon-start), currency (AUD),
                           hours (14h cap), fuzzyMatch, aggregations,
                           claudePrompt (shared with Edge Function),
-                          voiceParser, demo + demoStore, csv
-  pages/                  Dashboard, WeekCalendar, Projects, ProjectDetail,
-                          Workers, VoiceLog, Reports, Admin, Login
+                          voiceParser, demo + demoStore, csv,
+                          schedule (board geometry, drag maths, parts)
+  pages/                  Dashboard, WeekCalendar, Timeline, Projects,
+                          ProjectDetail, Workers, VoiceLog, Reports, Admin,
+                          Login
   routes/guards.tsx       RequireAuth, RequireRole
 
 supabase/

@@ -6,6 +6,7 @@ import type {
   MaterialEntry,
   Profile,
   Project,
+  ProjectScheduleBlock,
   ProjectVariation,
   TimeEntry,
   VoiceLog,
@@ -115,7 +116,107 @@ export const DEMO_PROJECTS: Project[] = [
     created_at: iso(today),
     updated_at: iso(today),
   },
+  // Booked but not started — gives the schedule board an "upcoming" job.
+  {
+    id: 'p-brunswick',
+    name: 'Brunswick Terrace Repaint',
+    client_name: 'Marchetti Property',
+    address: '88 Sydney Rd, Brunswick',
+    quoted_price: 26500,
+    quoted_hours: 180,
+    materials_budget: 3800,
+    daily_hours_warning: 8,
+    target_profit: 6000,
+    quote_type: 'fixed_quote',
+    needs_admin_review: false,
+    status: 'active',
+    color_tag: '#6f8fb0',
+    start_date: iso(addDays(monday, 21)),
+    end_date: iso(addDays(monday, 42)),
+    notes: 'Scaffold booked for the first Monday.',
+    created_at: iso(today),
+    updated_at: iso(today),
+  },
+  // Won, but no dates yet — sits in "Not on the calendar yet" until Alex
+  // drops it on the board.
+  {
+    id: 'p-fitzroy',
+    name: 'Fitzroy Warehouse Fitout',
+    client_name: 'Halden Studios',
+    address: '3 Little Oxford St, Fitzroy',
+    quoted_price: 41000,
+    quoted_hours: 260,
+    materials_budget: 5200,
+    daily_hours_warning: 8,
+    target_profit: 9000,
+    quote_type: 'time_and_materials',
+    needs_admin_review: false,
+    status: 'active',
+    color_tag: '#a98ab0',
+    start_date: null,
+    end_date: null,
+    notes: 'Client still confirming their handover date.',
+    created_at: iso(today),
+    updated_at: iso(today),
+  },
 ];
+
+/**
+ * Schedule parts. Every dated project gets one, except Northcote — a school,
+ * so the work is split across a term and the following holidays. That gap is
+ * the whole point of parts: the crew is free in it, and a single bar from
+ * August to October would hide that.
+ */
+export const DEMO_SCHEDULE_BLOCKS: ProjectScheduleBlock[] = [
+  {
+    id: 'sb-northcote-a',
+    project_id: 'p-northcote',
+    label: 'Term 3 — B & C blocks',
+    start_date: iso(addDays(monday, -14)),
+    end_date: iso(addDays(monday, 5)),
+    scope_id: null,
+    order_index: 0,
+    notes: null,
+    created_at: iso(today),
+    updated_at: iso(today),
+  },
+  {
+    id: 'sb-northcote-b',
+    project_id: 'p-northcote',
+    label: 'Term break — gym + hall',
+    start_date: iso(addDays(monday, 21)),
+    end_date: iso(addDays(monday, 42)),
+    scope_id: null,
+    order_index: 1,
+    notes: 'Only access we get to the gym all year.',
+    created_at: iso(today),
+    updated_at: iso(today),
+  },
+  ...DEMO_PROJECTS.filter(
+    (p) => p.id !== 'p-northcote' && p.start_date !== null && p.end_date !== null,
+  ).map((p, i) => ({
+    id: `sb-${p.id}`,
+    project_id: p.id,
+    label: null,
+    start_date: p.start_date as string,
+    end_date: p.end_date as string,
+    scope_id: null,
+    order_index: 0,
+    notes: null,
+    created_at: iso(today),
+    updated_at: iso(today),
+    _i: i,
+  })).map(({ _i, ...b }) => b),
+];
+
+// Mirror the DB trigger: projects.start_date / end_date are the envelope over
+// the parts, so the fixtures can't drift from what Postgres would compute.
+for (const project of DEMO_PROJECTS) {
+  const parts = DEMO_SCHEDULE_BLOCKS.filter((b) => b.project_id === project.id);
+  if (parts.length === 0) continue;
+  project.start_date = parts.reduce((a, b) => (b.start_date < a ? b.start_date : a), parts[0].start_date);
+  project.end_date = parts.reduce((a, b) => (b.end_date > a ? b.end_date : a), parts[0].end_date);
+}
 
 // Seed a week of realistic entries across the two active projects
 function mkTimeEntry(

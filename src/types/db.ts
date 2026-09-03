@@ -76,8 +76,38 @@ export interface Project {
   needs_admin_review: boolean;
   status: ProjectStatus;
   color_tag: string | null;
+  /**
+   * The schedule **envelope** — earliest start and latest finish across the
+   * project's `project_schedule_blocks`. Derived: a DB trigger maintains it on
+   * every part write, so read it freely but schedule by writing parts.
+   * Null when the job isn't on the calendar yet.
+   */
   start_date: ISODate | null;
   end_date: ISODate | null;
+  notes: string | null;
+  created_at: ISODateTime;
+  updated_at: ISODateTime;
+}
+
+/**
+ * One block of time a project is scheduled for. A job is a *set* of these,
+ * not one continuous bar — painting jobs start, stop and come back (weather,
+ * client delays, waiting on a trade), and the gap between parts is exactly
+ * when the crew is free for something else.
+ *
+ * A part is a **when**. A `ProjectScope` is a **what**. They're orthogonal —
+ * the same scope can be visited twice, one visit can cover several scopes —
+ * so `scope_id` is an optional hint, not a constraint.
+ */
+export interface ProjectScheduleBlock {
+  id: UUID;
+  project_id: UUID;
+  /** Free text. Falls back to "Part A", "Part B"… by position when null. */
+  label: string | null;
+  start_date: ISODate;
+  end_date: ISODate;
+  scope_id: UUID | null;
+  order_index: number;
   notes: string | null;
   created_at: ISODateTime;
   updated_at: ISODateTime;
