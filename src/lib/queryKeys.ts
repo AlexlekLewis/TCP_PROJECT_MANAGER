@@ -9,6 +9,8 @@ export const queryKeys = {
   projects: () => [...queryKeys.all, 'projects'] as const,
   project: (id: string) => [...queryKeys.projects(), id] as const,
 
+  scheduleBlocks: () => [...queryKeys.all, 'scheduleBlocks'] as const,
+
   timeEntries: () => [...queryKeys.all, 'timeEntries'] as const,
   timeEntriesByWeek: (weekStart: string) => [...queryKeys.timeEntries(), 'week', weekStart] as const,
   timeEntriesByProject: (projectId: string) =>

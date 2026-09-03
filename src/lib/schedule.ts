@@ -5,10 +5,16 @@
 // without rendering anything.
 
 import { addDays, differenceInCalendarDays, format, parseISO, startOfMonth } from 'date-fns';
-import type { Project } from '@/types/db';
+import type { Project, ProjectScheduleBlock } from '@/types/db';
 import { toISODate, weekStart } from './dates';
 
 // --- Scales ---------------------------------------------------------------
+
+/** An inclusive date range, both ends always present. */
+export interface Span {
+  start: string;
+  end: string;
+}
 
 export type ScaleId = '30d' | '60d' | '6m' | '12m';
 
@@ -204,6 +210,106 @@ export function applyDrag(
   }
   const next = addDays(e, deltaDays);
   return { start: startIso, end: toISODate(next < s ? s : next) };
+}
+
+// --- Parts ----------------------------------------------------------------
+
+/**
+ * Positional fallback label: 0 → "Part A", 1 → "Part B" … 26 → "Part AA".
+ * Only used when the part has no name of its own.
+ */
+export function defaultPartLabel(index: number): string {
+  let n = Math.max(0, Math.floor(index));
+  let letters = '';
+  do {
+    letters = String.fromCharCode(65 + (n % 26)) + letters;
+    n = Math.floor(n / 26) - 1;
+  } while (n >= 0);
+  return `Part ${letters}`;
+}
+
+/** The name to show on a bar — the part's own label, else its position. */
+export function partLabel(block: Pick<ProjectScheduleBlock, 'label'>, index: number): string {
+  const own = block.label?.trim();
+  return own && own.length > 0 ? own : defaultPartLabel(index);
+}
+
+/** Parts of one project, in calendar order. Ties break on order_index. */
+export function sortParts(blocks: ProjectScheduleBlock[]): ProjectScheduleBlock[] {
+  return [...blocks].sort((a, b) =>
+    a.start_date === b.start_date
+      ? a.order_index - b.order_index
+      : a.start_date < b.start_date
+        ? -1
+        : 1,
+  );
+}
+
+/** Group parts by project, each group calendar-ordered. */
+export function partsByProject(
+  blocks: ProjectScheduleBlock[],
+): Map<string, ProjectScheduleBlock[]> {
+  const map = new Map<string, ProjectScheduleBlock[]>();
+  for (const b of blocks) {
+    const list = map.get(b.project_id);
+    if (list) list.push(b);
+    else map.set(b.project_id, [b]);
+  }
+  for (const [id, list] of map) map.set(id, sortParts(list));
+  return map;
+}
+
+/**
+ * Earliest start / latest finish across a project's parts — the envelope the
+ * DB trigger mirrors onto `projects.start_date` / `end_date`. Null when the
+ * job has no parts.
+ */
+export function partsEnvelope(
+  blocks: ProjectScheduleBlock[],
+): { start: string; end: string } | null {
+  if (blocks.length === 0) return null;
+  let start = blocks[0].start_date;
+  let end = blocks[0].end_date;
+  for (const b of blocks) {
+    if (b.start_date < start) start = b.start_date;
+    if (b.end_date > end) end = b.end_date;
+  }
+  return { start, end };
+}
+
+/**
+ * Where a new part should go when Alex clicks "Add part": the week after the
+ * job currently finishes, Mon–Fri. Picked so the new bar lands clear of the
+ * existing ones instead of stacking on top of them.
+ */
+export function nextPartSpan(blocks: ProjectScheduleBlock[], today: Date): Span {
+  const envelope = partsEnvelope(blocks);
+  if (!envelope) return defaultSchedule(today);
+  const start = addDays(weekStart(parseISO(envelope.end)), 7);
+  return { start: toISODate(start), end: toISODate(addDays(start, 4)) };
+}
+
+/** Split a part in two at `atIso`, which becomes the second part's start. */
+export function splitPart(
+  block: Pick<ProjectScheduleBlock, 'start_date' | 'end_date'>,
+  atIso: string,
+): { first: Span; second: Span } | null {
+  // Needs at least two days to divide, and the cut must fall inside.
+  if (block.end_date <= block.start_date) return null;
+  if (atIso <= block.start_date || atIso > block.end_date) return null;
+  return {
+    first: { start: block.start_date, end: toISODate(addDays(parseISO(atIso), -1)) },
+    second: { start: atIso, end: block.end_date },
+  };
+}
+
+/** The midpoint of a part, used as the default cut for "Split". */
+export function partMidpoint(
+  block: Pick<ProjectScheduleBlock, 'start_date' | 'end_date'>,
+): string | null {
+  const days = differenceInCalendarDays(parseISO(block.end_date), parseISO(block.start_date)) + 1;
+  if (days < 2) return null;
+  return toISODate(addDays(parseISO(block.start_date), Math.floor(days / 2)));
 }
 
 // --- Upcoming jobs --------------------------------------------------------

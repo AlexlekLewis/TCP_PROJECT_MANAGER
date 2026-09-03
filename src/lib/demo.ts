@@ -6,6 +6,7 @@ import type {
   MaterialEntry,
   Profile,
   Project,
+  ProjectScheduleBlock,
   ProjectVariation,
   TimeEntry,
   VoiceLog,
@@ -159,6 +160,63 @@ export const DEMO_PROJECTS: Project[] = [
     updated_at: iso(today),
   },
 ];
+
+/**
+ * Schedule parts. Every dated project gets one, except Northcote — a school,
+ * so the work is split across a term and the following holidays. That gap is
+ * the whole point of parts: the crew is free in it, and a single bar from
+ * August to October would hide that.
+ */
+export const DEMO_SCHEDULE_BLOCKS: ProjectScheduleBlock[] = [
+  {
+    id: 'sb-northcote-a',
+    project_id: 'p-northcote',
+    label: 'Term 3 — B & C blocks',
+    start_date: iso(addDays(monday, -14)),
+    end_date: iso(addDays(monday, 5)),
+    scope_id: null,
+    order_index: 0,
+    notes: null,
+    created_at: iso(today),
+    updated_at: iso(today),
+  },
+  {
+    id: 'sb-northcote-b',
+    project_id: 'p-northcote',
+    label: 'Term break — gym + hall',
+    start_date: iso(addDays(monday, 21)),
+    end_date: iso(addDays(monday, 42)),
+    scope_id: null,
+    order_index: 1,
+    notes: 'Only access we get to the gym all year.',
+    created_at: iso(today),
+    updated_at: iso(today),
+  },
+  ...DEMO_PROJECTS.filter(
+    (p) => p.id !== 'p-northcote' && p.start_date !== null && p.end_date !== null,
+  ).map((p, i) => ({
+    id: `sb-${p.id}`,
+    project_id: p.id,
+    label: null,
+    start_date: p.start_date as string,
+    end_date: p.end_date as string,
+    scope_id: null,
+    order_index: 0,
+    notes: null,
+    created_at: iso(today),
+    updated_at: iso(today),
+    _i: i,
+  })).map(({ _i, ...b }) => b),
+];
+
+// Mirror the DB trigger: projects.start_date / end_date are the envelope over
+// the parts, so the fixtures can't drift from what Postgres would compute.
+for (const project of DEMO_PROJECTS) {
+  const parts = DEMO_SCHEDULE_BLOCKS.filter((b) => b.project_id === project.id);
+  if (parts.length === 0) continue;
+  project.start_date = parts.reduce((a, b) => (b.start_date < a ? b.start_date : a), parts[0].start_date);
+  project.end_date = parts.reduce((a, b) => (b.end_date > a ? b.end_date : a), parts[0].end_date);
+}
 
 // Seed a week of realistic entries across the two active projects
 function mkTimeEntry(

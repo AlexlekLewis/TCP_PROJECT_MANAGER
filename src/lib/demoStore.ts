@@ -5,6 +5,7 @@
 import {
   DEMO_MATERIAL_ENTRIES,
   DEMO_PROJECTS,
+  DEMO_SCHEDULE_BLOCKS,
   DEMO_TIME_ENTRIES,
   DEMO_USER_ID,
   DEMO_VARIATIONS,
@@ -15,6 +16,7 @@ import {
 import type {
   MaterialEntry,
   Project,
+  ProjectScheduleBlock,
   ProjectScope,
   ProjectVariation,
   TimeEntry,
@@ -35,6 +37,7 @@ class DemoStore {
   weekLocks: WeekLock[] = [...DEMO_WEEK_LOCKS];
   variations: ProjectVariation[] = [...DEMO_VARIATIONS];
   scopes: ProjectScope[] = [];
+  scheduleBlocks: ProjectScheduleBlock[] = [...DEMO_SCHEDULE_BLOCKS];
 
   private listeners = new Set<Listener>();
 
@@ -89,12 +92,65 @@ class DemoStore {
   }
   deleteProject(id: string) {
     this.projects = this.projects.filter((p) => p.id !== id);
+    // Mirrors the FK's ON DELETE CASCADE.
+    this.scheduleBlocks = this.scheduleBlocks.filter((b) => b.project_id !== id);
     this.notify();
   }
   projectHasEntries(id: string) {
     return (
       this.timeEntries.some((t) => t.project_id === id) ||
       this.materialEntries.some((m) => m.project_id === id)
+    );
+  }
+
+// --- Schedule parts ----------------------------------------------------
+  // Mirrors migration 20260903000001: parts are the source of truth and
+  // projects.start_date/end_date are the derived envelope. The envelope sync
+  // lives in `syncEnvelope` so demo mode can't drift from the DB trigger.
+  createScheduleBlock(
+    b: Omit<ProjectScheduleBlock, 'id' | 'created_at' | 'updated_at'>,
+  ): ProjectScheduleBlock {
+    const row: ProjectScheduleBlock = {
+      ...b,
+      id: this.genId('sb-'),
+      created_at: this.now(),
+      updated_at: this.now(),
+    };
+    this.scheduleBlocks = [...this.scheduleBlocks, row];
+    this.syncEnvelope(row.project_id);
+    this.notify();
+    return row;
+  }
+
+  updateScheduleBlock(id: string, patch: Partial<ProjectScheduleBlock>) {
+    const existing = this.scheduleBlocks.find((b) => b.id === id);
+    if (!existing) return;
+    this.scheduleBlocks = this.scheduleBlocks.map((b) =>
+      b.id === id ? { ...b, ...patch, updated_at: this.now() } : b,
+    );
+    this.syncEnvelope(existing.project_id);
+    this.notify();
+  }
+
+  deleteScheduleBlock(id: string) {
+    const existing = this.scheduleBlocks.find((b) => b.id === id);
+    if (!existing) return;
+    this.scheduleBlocks = this.scheduleBlocks.filter((b) => b.id !== id);
+    this.syncEnvelope(existing.project_id);
+    this.notify();
+  }
+
+  /** Recompute projects.start_date / end_date from the project's parts. */
+  private syncEnvelope(projectId: string) {
+    const parts = this.scheduleBlocks.filter((b) => b.project_id === projectId);
+    const start = parts.length
+      ? parts.reduce((a, b) => (b.start_date < a ? b.start_date : a), parts[0].start_date)
+      : null;
+    const end = parts.length
+      ? parts.reduce((a, b) => (b.end_date > a ? b.end_date : a), parts[0].end_date)
+      : null;
+    this.projects = this.projects.map((p) =>
+      p.id === projectId ? { ...p, start_date: start, end_date: end } : p,
     );
   }
 

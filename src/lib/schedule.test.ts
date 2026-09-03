@@ -9,10 +9,31 @@ import {
   daysFromPx,
   defaultSchedule,
   getScale,
+  defaultPartLabel,
+  nextPartSpan,
   overlapsWindow,
+  partLabel,
+  partMidpoint,
+  partsByProject,
+  partsEnvelope,
   relativeDayLabel,
+  sortParts,
+  splitPart,
 } from './schedule';
-import type { Project } from '@/types/db';
+import type { Project, ProjectScheduleBlock } from '@/types/db';
+
+const block = (
+  over: Partial<ProjectScheduleBlock> & { id: string; start_date: string; end_date: string },
+): ProjectScheduleBlock => ({
+  project_id: 'p1',
+  label: null,
+  scope_id: null,
+  order_index: 0,
+  notes: null,
+  created_at: '2026-01-01',
+  updated_at: '2026-01-01',
+  ...over,
+});
 
 const project = (over: Partial<Project> & { id: string }): Project => ({
   name: over.id,
@@ -285,5 +306,168 @@ describe('relativeDayLabel', () => {
     expect(relativeDayLabel(-1)).toBe('yesterday');
     expect(relativeDayLabel(9)).toBe('in 9 days');
     expect(relativeDayLabel(-4)).toBe('4 days ago');
+  });
+});
+
+describe('defaultPartLabel', () => {
+  it('counts up the alphabet', () => {
+    expect(defaultPartLabel(0)).toBe('Part A');
+    expect(defaultPartLabel(1)).toBe('Part B');
+    expect(defaultPartLabel(25)).toBe('Part Z');
+  });
+
+  it('keeps going past Z instead of wrapping back to A', () => {
+    expect(defaultPartLabel(26)).toBe('Part AA');
+    expect(defaultPartLabel(27)).toBe('Part AB');
+  });
+});
+
+describe('partLabel', () => {
+  it('prefers the part\'s own name', () => {
+    expect(partLabel({ label: 'Scaffold week' }, 3)).toBe('Scaffold week');
+  });
+
+  it('falls back to position when unnamed or blank', () => {
+    expect(partLabel({ label: null }, 1)).toBe('Part B');
+    expect(partLabel({ label: '   ' }, 0)).toBe('Part A');
+  });
+});
+
+describe('sortParts / partsByProject', () => {
+  it('orders parts by calendar date, not insertion', () => {
+    const parts = [
+      block({ id: 'b2', start_date: '2026-10-01', end_date: '2026-10-10' }),
+      block({ id: 'b1', start_date: '2026-08-01', end_date: '2026-08-10' }),
+    ];
+    expect(sortParts(parts).map((b) => b.id)).toEqual(['b1', 'b2']);
+  });
+
+  it('breaks same-day ties on order_index', () => {
+    const parts = [
+      block({ id: 'late', start_date: '2026-08-01', end_date: '2026-08-02', order_index: 5 }),
+      block({ id: 'early', start_date: '2026-08-01', end_date: '2026-08-02', order_index: 1 }),
+    ];
+    expect(sortParts(parts).map((b) => b.id)).toEqual(['early', 'late']);
+  });
+
+  it('does not mutate its input', () => {
+    const parts = [
+      block({ id: 'b2', start_date: '2026-10-01', end_date: '2026-10-10' }),
+      block({ id: 'b1', start_date: '2026-08-01', end_date: '2026-08-10' }),
+    ];
+    sortParts(parts);
+    expect(parts.map((b) => b.id)).toEqual(['b2', 'b1']);
+  });
+
+  it('groups by project and sorts each group', () => {
+    const grouped = partsByProject([
+      block({ id: 'a2', project_id: 'A', start_date: '2026-10-01', end_date: '2026-10-05' }),
+      block({ id: 'b1', project_id: 'B', start_date: '2026-09-01', end_date: '2026-09-05' }),
+      block({ id: 'a1', project_id: 'A', start_date: '2026-08-01', end_date: '2026-08-05' }),
+    ]);
+    expect(grouped.get('A')?.map((b) => b.id)).toEqual(['a1', 'a2']);
+    expect(grouped.get('B')?.map((b) => b.id)).toEqual(['b1']);
+  });
+});
+
+describe('partsEnvelope', () => {
+  it('spans earliest start to latest finish across a gap', () => {
+    expect(
+      partsEnvelope([
+        block({ id: 'b1', start_date: '2026-08-17', end_date: '2026-09-05' }),
+        block({ id: 'b2', start_date: '2026-10-05', end_date: '2026-10-16' }),
+      ]),
+    ).toEqual({ start: '2026-08-17', end: '2026-10-16' });
+  });
+
+  it('is unaffected by the order parts arrive in', () => {
+    expect(
+      partsEnvelope([
+        block({ id: 'b2', start_date: '2026-10-05', end_date: '2026-10-16' }),
+        block({ id: 'b1', start_date: '2026-08-17', end_date: '2026-09-05' }),
+      ]),
+    ).toEqual({ start: '2026-08-17', end: '2026-10-16' });
+  });
+
+  it('handles a part fully contained in another', () => {
+    expect(
+      partsEnvelope([
+        block({ id: 'wide', start_date: '2026-08-01', end_date: '2026-12-01' }),
+        block({ id: 'inner', start_date: '2026-09-01', end_date: '2026-09-10' }),
+      ]),
+    ).toEqual({ start: '2026-08-01', end: '2026-12-01' });
+  });
+
+  it('is null for a job with no parts', () => {
+    expect(partsEnvelope([])).toBeNull();
+  });
+});
+
+describe('nextPartSpan', () => {
+  it('lands the week after the job currently finishes, Mon–Fri', () => {
+    // Job ends Wed 2026-09-09; that week starts Mon 7th, so the new part is
+    // the following Mon 14th through Fri 18th.
+    const span = nextPartSpan(
+      [block({ id: 'b1', start_date: '2026-09-01', end_date: '2026-09-09' })],
+      parseISO('2026-09-03'),
+    );
+    expect(span).toEqual({ start: '2026-09-14', end: '2026-09-18' });
+  });
+
+  it('falls back to the default placement when there are no parts yet', () => {
+    expect(nextPartSpan([], parseISO('2026-06-17'))).toEqual({
+      start: '2026-06-22',
+      end: '2026-06-26',
+    });
+  });
+});
+
+describe('splitPart', () => {
+  const part = { start_date: '2026-09-01', end_date: '2026-09-10' };
+
+  it('cuts in two, with the second part starting on the cut day', () => {
+    expect(splitPart(part, '2026-09-06')).toEqual({
+      first: { start: '2026-09-01', end: '2026-09-05' },
+      second: { start: '2026-09-06', end: '2026-09-10' },
+    });
+  });
+
+  it('allows a cut on the last day, leaving a one-day tail', () => {
+    expect(splitPart(part, '2026-09-10')).toEqual({
+      first: { start: '2026-09-01', end: '2026-09-09' },
+      second: { start: '2026-09-10', end: '2026-09-10' },
+    });
+  });
+
+  it('refuses a cut at or before the start — that would make an empty part', () => {
+    expect(splitPart(part, '2026-09-01')).toBeNull();
+    expect(splitPart(part, '2026-08-25')).toBeNull();
+  });
+
+  it('refuses a cut past the end', () => {
+    expect(splitPart(part, '2026-09-11')).toBeNull();
+  });
+
+  it('refuses to split a single-day part', () => {
+    expect(splitPart({ start_date: '2026-09-01', end_date: '2026-09-01' }, '2026-09-01')).toBeNull();
+  });
+});
+
+describe('partMidpoint', () => {
+  it('picks the middle day of the part', () => {
+    expect(partMidpoint({ start_date: '2026-09-01', end_date: '2026-09-10' })).toBe('2026-09-06');
+  });
+
+  it('splits a two-day part into one day each', () => {
+    expect(partMidpoint({ start_date: '2026-09-01', end_date: '2026-09-02' })).toBe('2026-09-02');
+  });
+
+  it('is null for a single-day part — nothing to divide', () => {
+    expect(partMidpoint({ start_date: '2026-09-01', end_date: '2026-09-01' })).toBeNull();
+  });
+
+  it('always returns a cut that splitPart accepts', () => {
+    const part = { start_date: '2026-09-01', end_date: '2026-09-10' };
+    expect(splitPart(part, partMidpoint(part)!)).not.toBeNull();
   });
 });

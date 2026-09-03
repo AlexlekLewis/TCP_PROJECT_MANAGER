@@ -9,12 +9,23 @@ import {
   GripVertical,
   Hammer,
   Info,
+  Plus,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { useProjects, useUpdateProject } from '@/hooks/useProjects';
+import { useProjects } from '@/hooks/useProjects';
+import {
+  useCreateScheduleBlock,
+  useDeleteScheduleBlock,
+  useScheduleBlocks,
+  useUpdateScheduleBlock,
+} from '@/hooks/useScheduleBlocks';
+import {
+  SchedulePartDialog,
+  type PartDraft,
+} from '@/components/features/SchedulePartDialog';
 import { useWorkers } from '@/hooks/useWorkers';
 import { useAllTimeEntries } from '@/hooks/useTimeEntries';
 import { useAuth } from '@/context/AuthContext';
@@ -30,15 +41,20 @@ import {
   daysFromPx,
   defaultSchedule,
   getScale,
+  nextPartSpan,
   overlapsWindow,
+  partLabel,
+  partsByProject,
   relativeDayLabel,
   SCALES,
+  splitPart,
   type DragMode,
   type ScaleId,
   type ScheduledJob,
+  type Span,
 } from '@/lib/schedule';
 import { cn } from '@/lib/utils';
-import type { Project } from '@/types/db';
+import type { Project, ProjectScheduleBlock } from '@/types/db';
 
 const ROW_HEIGHT = 52;
 /**
@@ -50,22 +66,22 @@ const LABEL_COL = 'w-32 shrink-0 md:w-44';
 const UNDERLAY_INSET = 'left-32 md:left-44';
 const FALLBACK_COLOR = '#8b8b94';
 
-/** start/end pair, always both present — the board only plots scheduled jobs. */
-type Span = { start: string; end: string };
-
 export default function TimelinePage() {
   const [scaleId, setScaleId] = useState<ScaleId>('30d');
   const [anchor, setAnchor] = useState<Date>(new Date());
   const scale = getScale(scaleId);
 
   const { data: projects = [] } = useProjects();
+  const { data: blocks = [] } = useScheduleBlocks();
   const { data: workers = [] } = useWorkers();
   const { data: timeEntries = [] } = useAllTimeEntries();
   const { role } = useAuth();
-  const updateProject = useUpdateProject();
+  const createPart = useCreateScheduleBlock();
+  const updatePart = useUpdateScheduleBlock();
+  const deletePart = useDeleteScheduleBlock();
 
-  // Only the admin may write to `projects` (RLS: projects_admin_write), so the
-  // manager gets the same board read-only rather than drags that 403 on drop.
+  // Only the admin may write the schedule (RLS: project_schedule_blocks_admin_write),
+  // so the manager gets the same board read-only rather than drags that 403 on drop.
   const editable = role === 'admin';
 
   const rangeStart = weekStart(anchor);
@@ -73,91 +89,104 @@ export default function TimelinePage() {
   const rangeEnd = addDays(rangeStart, totalDays - 1);
   const today = new Date();
 
-  // Dates we've sent but not yet seen back from the server. Keeps a dragged
-  // bar where it was dropped instead of snapping back for one refetch.
+  /** Part being edited by hand, if any. */
+  const [editing, setEditing] = useState<string | null>(null);
+
+  // Spans we've sent but not yet seen back from the server, keyed by part id.
+  // Keeps a dragged bar where it was dropped instead of snapping back for one
+  // refetch and reading as a failed drag.
   const [pending, setPending] = useState<Record<string, Span>>({});
   useEffect(() => {
     setPending((cur) => {
-      const ids = Object.keys(cur);
-      if (ids.length === 0) return cur;
+      if (Object.keys(cur).length === 0) return cur;
       const next = { ...cur };
       let changed = false;
-      for (const p of projects) {
-        const q = next[p.id];
-        if (q && p.start_date === q.start && p.end_date === q.end) {
-          delete next[p.id];
+      for (const b of blocks) {
+        const q = next[b.id];
+        if (q && b.start_date === q.start && b.end_date === q.end) {
+          delete next[b.id];
           changed = true;
         }
       }
       return changed ? next : cur;
     });
-  }, [projects]);
+  }, [blocks]);
 
-  /** A project's dates, with any in-flight edit applied. */
+  /** A part's dates, with any in-flight edit applied. */
   const spanOf = useCallback(
-    (p: Project): Span | null => {
-      const s = pending[p.id];
-      if (s) return s;
-      if (!p.start_date || !p.end_date) return null;
-      return { start: p.start_date, end: p.end_date };
-    },
+    (b: ProjectScheduleBlock): Span =>
+      pending[b.id] ?? { start: b.start_date, end: b.end_date },
     [pending],
   );
 
-  const commit = useCallback(
-    (p: Project, next: Span) => {
-      const prev = spanOf(p);
-      setPending((cur) => ({ ...cur, [p.id]: next }));
-      const save = (span: Span) =>
-        updateProject.mutate(
-          { id: p.id, patch: { start_date: span.start, end_date: span.end } },
-          {
-            onError: (err) => {
-              setPending((cur) => {
-                const c = { ...cur };
-                delete c[p.id];
-                return c;
-              });
-              toast.error(
-                err instanceof Error ? err.message : `Could not reschedule ${p.name}`,
-              );
-            },
+  const savePart = useCallback(
+    (part: ProjectScheduleBlock, next: Span, label?: string | null) => {
+      setPending((cur) => ({ ...cur, [part.id]: next }));
+      updatePart.mutate(
+        {
+          id: part.id,
+          patch: {
+            start_date: next.start,
+            end_date: next.end,
+            ...(label === undefined ? {} : { label }),
           },
-        );
-      save(next);
-      toast.success(
-        `${p.name} — ${format(parseISO(next.start), 'd MMM')} to ${format(parseISO(next.end), 'd MMM')}`,
-        prev
-          ? {
-              // Longer than the 4s default: a fat-fingered drag is exactly the
-              // mistake this button exists for, and 4s isn't long enough to
-              // notice the bar landed in the wrong place and reach for it.
-              duration: 10_000,
-              action: {
-                label: 'Undo',
-                onClick: () => {
-                  setPending((cur) => ({ ...cur, [p.id]: prev }));
-                  save(prev);
-                },
-              },
-            }
-          : undefined,
+        },
+        {
+          onError: (err) => {
+            setPending((cur) => {
+              const c = { ...cur };
+              delete c[part.id];
+              return c;
+            });
+            toast.error(err instanceof Error ? err.message : 'Could not save the new dates');
+          },
+        },
       );
     },
-    [spanOf, updateProject],
+    [updatePart],
   );
 
-  // Rows: everything scheduled that touches the window, earliest start first.
+  /** Drag/nudge commit — same as savePart, plus an Undo affordance. */
+  const commitDrag = useCallback(
+    (project: Project, part: ProjectScheduleBlock, next: Span, name: string) => {
+      const prev = spanOf(part);
+      savePart(part, next);
+      toast.success(
+        `${project.name} · ${name} — ${format(parseISO(next.start), 'd MMM')} to ${format(
+          parseISO(next.end),
+          'd MMM',
+        )}`,
+        {
+          // Longer than the 4s default: a fat-fingered drag is exactly the
+          // mistake this button exists for, and 4s isn't long enough to notice
+          // the bar landed wrong and reach for it.
+          duration: 10_000,
+          action: { label: 'Undo', onClick: () => savePart(part, prev) },
+        },
+      );
+    },
+    [spanOf, savePart],
+  );
+
+  const partsFor = useMemo(() => partsByProject(blocks), [blocks]);
+
+  // Rows: every non-archived job with at least one part touching the window.
   const rows = useMemo(() => {
     return projects
       .filter((p) => p.status !== 'archived')
-      .map((p) => ({ project: p, span: spanOf(p) }))
-      .filter(
-        (r): r is { project: Project; span: Span } =>
-          r.span !== null && overlapsWindow(r.span.start, r.span.end, rangeStart, totalDays),
+      .map((project) => ({ project, parts: partsFor.get(project.id) ?? [] }))
+      .filter((row) =>
+        row.parts.some((b) => {
+          const span = spanOf(b);
+          return overlapsWindow(span.start, span.end, rangeStart, totalDays);
+        }),
       )
-      .sort((a, b) => (a.span.start === b.span.start ? 0 : a.span.start < b.span.start ? -1 : 1));
-  }, [projects, spanOf, rangeStart, totalDays]);
+      .sort((a, b) => {
+        const as = a.parts[0]?.start_date ?? '';
+        const bs = b.parts[0]?.start_date ?? '';
+        return as === bs ? a.project.name.localeCompare(b.project.name) : as < bs ? -1 : 1;
+      });
+  }, [projects, partsFor, spanOf, rangeStart, totalDays]);
 
   const buckets = useMemo(
     () => bucketJobs(projects, today, totalDays),
@@ -178,9 +207,85 @@ export default function TimelinePage() {
     return map;
   }, [rows, timeEntries, workers]);
 
-  const scheduleUnscheduled = (p: Project) => {
-    const span = defaultSchedule(new Date());
-    commit(p, span);
+  const addPart = (project: Project) => {
+    const existing = partsFor.get(project.id) ?? [];
+    const span = existing.length ? nextPartSpan(existing, new Date()) : defaultSchedule(new Date());
+    createPart.mutate(
+      {
+        project_id: project.id,
+        label: null,
+        start_date: span.start,
+        end_date: span.end,
+        scope_id: null,
+        order_index: existing.length,
+        notes: null,
+      },
+      {
+        onSuccess: () =>
+          toast.success(
+            `${project.name} — new part on ${format(parseISO(span.start), 'd MMM')}. Drag it to where it belongs.`,
+          ),
+        onError: (err) =>
+          toast.error(err instanceof Error ? err.message : 'Could not add the part'),
+      },
+    );
+  };
+
+  // --- Manual edit dialog --------------------------------------------------
+  const editingPart = blocks.find((b) => b.id === editing) ?? null;
+  const editingProject = editingPart
+    ? (projects.find((p) => p.id === editingPart.project_id) ?? null)
+    : null;
+  const editingSiblings = editingPart ? (partsFor.get(editingPart.project_id) ?? []) : [];
+  const editingIndex = editingPart ? editingSiblings.findIndex((b) => b.id === editingPart.id) : 0;
+
+  const handleSave = (draft: PartDraft) => {
+    if (!editingPart) return;
+    savePart(editingPart, { start: draft.start, end: draft.end }, draft.label.trim() || null);
+    setEditing(null);
+  };
+
+  const handleSplit = (atIso: string) => {
+    if (!editingPart || !editingProject) return;
+    const cut = splitPart(editingPart, atIso);
+    if (!cut) return;
+    savePart(editingPart, cut.first);
+    createPart.mutate(
+      {
+        project_id: editingPart.project_id,
+        label: null,
+        start_date: cut.second.start,
+        end_date: cut.second.end,
+        scope_id: editingPart.scope_id,
+        order_index: editingSiblings.length,
+        notes: null,
+      },
+      {
+        onSuccess: () =>
+          toast.success(
+            `${editingProject.name} split at ${format(parseISO(atIso), 'd MMM')} — drag the second part to when you come back.`,
+          ),
+        onError: (err) =>
+          toast.error(err instanceof Error ? err.message : 'Could not split the part'),
+      },
+    );
+    setEditing(null);
+  };
+
+  const handleDelete = () => {
+    if (!editingPart || !editingProject) return;
+    const last = editingSiblings.length === 1;
+    deletePart.mutate(editingPart.id, {
+      onSuccess: () =>
+        toast.success(
+          last
+            ? `${editingProject.name} taken off the calendar.`
+            : `Part removed from ${editingProject.name}.`,
+        ),
+      onError: (err) =>
+        toast.error(err instanceof Error ? err.message : 'Could not remove the part'),
+    });
+    setEditing(null);
   };
 
   return (
@@ -216,11 +321,7 @@ export default function TimelinePage() {
       </div>
 
       {/* Zoom — how far ahead the underlay reaches. */}
-      <div
-        className="flex flex-wrap items-center gap-1"
-        role="group"
-        aria-label="Timeline range"
-      >
+      <div className="flex flex-wrap items-center gap-1" role="group" aria-label="Timeline range">
         <span className="mr-1 text-xs uppercase tracking-wide text-muted-foreground">
           Looking ahead
         </span>
@@ -239,40 +340,65 @@ export default function TimelinePage() {
 
       <ScheduleBoard
         rows={rows}
+        spanOf={spanOf}
         rangeStart={rangeStart}
         totalDays={totalDays}
         tick={scale.tick}
         snapDays={scale.snapDays}
         editable={editable}
         hoursPctById={hoursPctById}
-        onCommit={commit}
+        onCommit={commitDrag}
+        onEdit={setEditing}
+        onAddPart={addPart}
       />
 
       {editable && rows.length > 0 && (
-        <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
-          <Info className="h-3.5 w-3.5 shrink-0" />
-          Drag a bar to move the job, drag either end to change its length.
-          {scale.snapDays > 1 && ` At this range it snaps to whole weeks.`} Arrow keys nudge a
-          focused bar; hold Shift to stretch it.
+        <p className="flex items-start gap-1.5 text-xs text-muted-foreground">
+          <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+          <span>
+            Drag a bar to move it, drag either end to change its length, or click it to type the
+            dates in.
+            {scale.snapDays > 1 && ' Dragging snaps to whole weeks at this range — click the bar for exact days.'}{' '}
+            A job that stops and comes back can be split into parts.
+          </span>
         </p>
       )}
 
       <UpcomingJobs
         buckets={buckets}
+        partsFor={partsFor}
         editable={editable}
         horizonLabel={scale.label}
-        onSchedule={scheduleUnscheduled}
+        onSchedule={addPart}
       />
 
       <ThisWeekSchedule />
+
+      <SchedulePartDialog
+        open={!!editingPart}
+        part={editingPart}
+        index={editingIndex < 0 ? 0 : editingIndex}
+        projectName={editingProject?.name ?? ''}
+        partCount={editingSiblings.length}
+        onSave={handleSave}
+        onSplit={handleSplit}
+        onDelete={handleDelete}
+        onClose={() => setEditing(null)}
+      />
     </div>
   );
 }
 
 // --- Board ----------------------------------------------------------------
 
+interface Row {
+  project: Project;
+  parts: ProjectScheduleBlock[];
+}
+
 function ScheduleBoard({
   rows,
+  spanOf,
   rangeStart,
   totalDays,
   tick,
@@ -280,15 +406,20 @@ function ScheduleBoard({
   editable,
   hoursPctById,
   onCommit,
+  onEdit,
+  onAddPart,
 }: {
-  rows: Array<{ project: Project; span: Span }>;
+  rows: Row[];
+  spanOf: (b: ProjectScheduleBlock) => Span;
   rangeStart: Date;
   totalDays: number;
   tick: 'day' | 'week' | 'month';
   snapDays: number;
   editable: boolean;
   hoursPctById: Map<string, number>;
-  onCommit: (p: Project, next: Span) => void;
+  onCommit: (project: Project, part: ProjectScheduleBlock, next: Span, name: string) => void;
+  onEdit: (partId: string) => void;
+  onAddPart: (project: Project) => void;
 }) {
   const [trackWidth, setTrackWidth] = useState(0);
   const observerRef = useRef<ResizeObserver | null>(null);
@@ -316,10 +447,9 @@ function ScheduleBoard({
 
   const todayPct = useMemo(() => {
     const iso = toISODate(new Date());
-    const g = overlapsWindow(iso, iso, rangeStart, totalDays)
-      ? barGeometry(iso, iso, rangeStart, totalDays)
+    return overlapsWindow(iso, iso, rangeStart, totalDays)
+      ? barGeometry(iso, iso, rangeStart, totalDays).leftPct
       : null;
-    return g ? g.leftPct : null;
   }, [rangeStart, totalDays]);
 
   if (rows.length === 0) {
@@ -328,8 +458,7 @@ function ScheduleBoard({
         <CardContent className="py-12 text-center text-sm text-muted-foreground">
           No jobs scheduled in this window.
           <p className="mt-2 text-xs">
-            Widen the range above, or give a job start and end dates below to put it on the
-            board.
+            Widen the range above, or put a job on the calendar from the list below.
           </p>
         </CardContent>
       </Card>
@@ -391,11 +520,17 @@ function ScheduleBoard({
             {/* Rows over a shared underlay */}
             <div className="relative">
               {/* Underlay: alternating months, weekend shading, gridlines */}
-              <div className={cn('pointer-events-none absolute inset-y-0 right-0', UNDERLAY_INSET)} aria-hidden>
+              <div
+                className={cn('pointer-events-none absolute inset-y-0 right-0', UNDERLAY_INSET)}
+                aria-hidden
+              >
                 {months.map((m) => (
                   <div
                     key={m.key}
-                    className={cn('absolute inset-y-0 border-r border-border', m.alt && 'bg-muted/30')}
+                    className={cn(
+                      'absolute inset-y-0 border-r border-border',
+                      m.alt && 'bg-muted/30',
+                    )}
                     style={{ left: `${m.leftPct}%`, width: `${m.widthPct}%` }}
                   />
                 ))}
@@ -411,18 +546,20 @@ function ScheduleBoard({
                 ))}
               </div>
 
-              {rows.map((r) => (
+              {rows.map((row) => (
                 <ScheduleRow
-                  key={r.project.id}
-                  project={r.project}
-                  span={r.span}
+                  key={row.project.id}
+                  row={row}
+                  spanOf={spanOf}
                   rangeStart={rangeStart}
                   totalDays={totalDays}
                   snapDays={snapDays}
                   trackWidth={trackWidth}
                   editable={editable}
-                  hoursUsedPct={hoursPctById.get(r.project.id) ?? 0}
+                  hoursUsedPct={hoursPctById.get(row.project.id) ?? 0}
                   onCommit={onCommit}
+                  onEdit={onEdit}
+                  onAddPart={onAddPart}
                 />
               ))}
 
@@ -450,10 +587,96 @@ function ScheduleBoard({
   );
 }
 
-// --- One row + its draggable bar -----------------------------------------
+// --- One row: a job and all its parts ------------------------------------
 
 function ScheduleRow({
+  row,
+  spanOf,
+  rangeStart,
+  totalDays,
+  snapDays,
+  trackWidth,
+  editable,
+  hoursUsedPct,
+  onCommit,
+  onEdit,
+  onAddPart,
+}: {
+  row: Row;
+  spanOf: (b: ProjectScheduleBlock) => Span;
+  rangeStart: Date;
+  totalDays: number;
+  snapDays: number;
+  trackWidth: number;
+  editable: boolean;
+  hoursUsedPct: number;
+  onCommit: (project: Project, part: ProjectScheduleBlock, next: Span, name: string) => void;
+  onEdit: (partId: string) => void;
+  onAddPart: (project: Project) => void;
+}) {
+  const { project, parts } = row;
+  const color = project.color_tag ?? FALLBACK_COLOR;
+
+  return (
+    <div className="group relative flex items-center border-b" style={{ height: ROW_HEIGHT }}>
+      <div className={cn(LABEL_COL, 'z-10 flex items-center gap-1 border-r bg-card px-3 py-1.5')}>
+        <Link to={`/projects/${project.id}`} className="min-w-0 flex-1 hover:underline">
+          <div className="flex items-center gap-2">
+            <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: color }} />
+            <p className="truncate text-sm font-medium">{project.name}</p>
+          </div>
+          <p className="truncate text-[11px] text-muted-foreground">
+            {parts.length > 1
+              ? `${parts.length} parts`
+              : (project.client_name ?? '—')}
+          </p>
+        </Link>
+        {editable && (
+          <button
+            type="button"
+            onClick={() => onAddPart(project)}
+            title={`Add another part to ${project.name}`}
+            aria-label={`Add another part to ${project.name}`}
+            className="shrink-0 rounded p-1 text-muted-foreground opacity-0 transition-opacity hover:bg-accent hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100"
+          >
+            <Plus className="h-3.5 w-3.5" />
+          </button>
+        )}
+      </div>
+
+      <div className="relative flex-1">
+        {parts.map((part, i) => (
+          <ScheduleBar
+            key={part.id}
+            project={project}
+            part={part}
+            index={i}
+            isLast={i === parts.length - 1}
+            multiPart={parts.length > 1}
+            span={spanOf(part)}
+            rangeStart={rangeStart}
+            totalDays={totalDays}
+            snapDays={snapDays}
+            trackWidth={trackWidth}
+            editable={editable}
+            hoursUsedPct={hoursUsedPct}
+            onCommit={onCommit}
+            onEdit={onEdit}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// --- One draggable part ---------------------------------------------------
+
+function ScheduleBar({
   project,
+  part,
+  index,
+  isLast,
+  multiPart,
   span,
   rangeStart,
   totalDays,
@@ -462,8 +685,13 @@ function ScheduleRow({
   editable,
   hoursUsedPct,
   onCommit,
+  onEdit,
 }: {
   project: Project;
+  part: ProjectScheduleBlock;
+  index: number;
+  isLast: boolean;
+  multiPart: boolean;
   span: Span;
   rangeStart: Date;
   totalDays: number;
@@ -471,7 +699,8 @@ function ScheduleRow({
   trackWidth: number;
   editable: boolean;
   hoursUsedPct: number;
-  onCommit: (p: Project, next: Span) => void;
+  onCommit: (project: Project, part: ProjectScheduleBlock, next: Span, name: string) => void;
+  onEdit: (partId: string) => void;
 }) {
   const navigate = useNavigate();
   const [drag, setDrag] = useState<{
@@ -481,21 +710,27 @@ function ScheduleRow({
     moved: boolean;
   } | null>(null);
 
+  const name = partLabel(part, index);
   const preview = drag ? applyDrag(span.start, span.end, drag.mode, drag.deltaDays) : span;
   const geo = barGeometry(preview.start, preview.end, rangeStart, totalDays);
   const color = project.color_tag ?? FALLBACK_COLOR;
   const burn = hoursUsedPct > 100 ? 'over' : hoursUsedPct > 85 ? 'near' : 'ok';
 
+  // Nothing to draw when the part sits entirely outside the window — but its
+  // siblings may still be visible, which is why this is per-part not per-row.
+  const visible = overlapsWindow(preview.start, preview.end, rangeStart, totalDays);
+
   // A 6-week job is ~30px wide on the 12-month board. Drop the labels rather
   // than clip them into nonsense; the row header and the hover title still say
   // what it is.
   const barWidthPx = (geo.widthPct / 100) * trackWidth;
-  const showDates = barWidthPx >= 96;
-  const showPct = barWidthPx >= 44;
   const rangeText = `${format(parseISO(preview.start), 'd MMM')} – ${format(parseISO(preview.end), 'd MMM')}`;
+  const primaryText = multiPart ? `${name} · ${rangeText}` : rangeText;
+  const showText = barWidthPx >= (multiPart ? 130 : 96);
+  const showPct = isLast && barWidthPx >= 44;
 
   // Set when a press turned into a real drag, so the click the browser fires
-  // afterwards doesn't also open the project. Cleared on the next press, in
+  // afterwards doesn't also open the editor. Cleared on the next press, in
   // case that click landed outside the bar and never reached onClick.
   const draggedRef = useRef(false);
 
@@ -512,9 +747,7 @@ function ScheduleRow({
     if (!drag) return;
     const dx = e.clientX - drag.startX;
     const deltaDays = daysFromPx(dx, trackWidth, totalDays, snapDays);
-    setDrag((d) =>
-      d ? { ...d, deltaDays, moved: d.moved || Math.abs(dx) > 3 } : d,
-    );
+    setDrag((d) => (d ? { ...d, deltaDays, moved: d.moved || Math.abs(dx) > 3 } : d));
   };
 
   const endDrag = (e: React.PointerEvent) => {
@@ -524,114 +757,107 @@ function ScheduleRow({
     if (e.currentTarget.hasPointerCapture?.(e.pointerId)) {
       e.currentTarget.releasePointerCapture(e.pointerId);
     }
-    // A press that never really moved falls through to onClick and opens the
-    // job; anything else is a reschedule.
+    // A press that never really moved falls through to onClick.
     if (!d.moved) return;
     draggedRef.current = true;
     const next = applyDrag(span.start, span.end, d.mode, d.deltaDays);
-    if (next.start !== span.start || next.end !== span.end) onCommit(project, next);
+    if (next.start !== span.start || next.end !== span.end) {
+      onCommit(project, part, next, name);
+    }
   };
 
-  // Click opens the job for both roles — the manager never enters the drag
-  // path at all, so this is his only way onto the project from the board.
+  // Admin clicks to type exact dates; the manager can't edit, so for him a
+  // click is the only way onto the job from the board.
   const onClick = () => {
     if (draggedRef.current) {
       draggedRef.current = false;
       return;
     }
-    navigate(`/projects/${project.id}`);
+    if (editable) onEdit(part.id);
+    else navigate(`/projects/${project.id}`);
   };
 
   const onKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' || e.key === ' ') {
       e.preventDefault();
-      navigate(`/projects/${project.id}`);
+      onClick();
       return;
     }
     if (!editable) return;
     if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
     e.preventDefault();
     const delta = (e.key === 'ArrowRight' ? 1 : -1) * snapDays;
-    // Shift stretches the finish date; plain arrows slide the whole job.
-    onCommit(project, applyDrag(span.start, span.end, e.shiftKey ? 'resize-end' : 'move', delta));
+    // Shift stretches the finish date; plain arrows slide the whole part.
+    onCommit(
+      project,
+      part,
+      applyDrag(span.start, span.end, e.shiftKey ? 'resize-end' : 'move', delta),
+      name,
+    );
   };
 
+  if (!visible) return null;
+
   return (
-    <div className="relative flex items-center border-b" style={{ height: ROW_HEIGHT }}>
-      <div className={cn(LABEL_COL, 'z-10 border-r bg-card px-3 py-1.5')}>
-        <Link to={`/projects/${project.id}`} className="block hover:underline">
-          <div className="flex items-center gap-2">
-            <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: color }} />
-            <p className="truncate text-sm font-medium">{project.name}</p>
-          </div>
-          <p className="truncate text-[11px] text-muted-foreground">
-            {project.client_name ?? '—'}
-          </p>
-        </Link>
+    <div
+      role="button"
+      tabIndex={0}
+      aria-label={`${project.name}${multiPart ? `, ${name}` : ''}, ${format(
+        parseISO(preview.start),
+        'd MMM',
+      )} to ${format(parseISO(preview.end), 'd MMM yyyy')}${
+        editable ? '. Drag to move, or press Enter to type the dates.' : ''
+      }`}
+      onPointerDown={beginDrag('move')}
+      onPointerMove={onPointerMove}
+      onPointerUp={endDrag}
+      onPointerCancel={endDrag}
+      onClick={onClick}
+      onKeyDown={onKeyDown}
+      title={`${project.name} · ${multiPart ? `${name} · ` : ''}${rangeText} · ${Math.round(hoursUsedPct)}% of quoted hours`}
+      className={cn(
+        'absolute top-1/2 flex h-8 -translate-y-1/2 items-center overflow-hidden rounded-md border shadow-sm outline-none',
+        'focus-visible:ring-2 focus-visible:ring-ring',
+        editable ? 'cursor-grab touch-none active:cursor-grabbing' : 'cursor-pointer',
+        drag && 'z-30 shadow-lg ring-2 ring-ring',
+        geo.clippedStart && 'rounded-l-none border-l-0',
+        geo.clippedEnd && 'rounded-r-none border-r-0',
+      )}
+      style={{
+        left: `${geo.leftPct}%`,
+        width: `${geo.widthPct}%`,
+        background: `${color}2e`,
+        borderColor: `${color}99`,
+      }}
+    >
+      {/* Hours-burn fill: how much of the quoted time is already spent. */}
+      <div
+        className={cn(
+          'absolute inset-y-0 left-0',
+          burn === 'over' && 'bg-destructive/60',
+          burn === 'near' && 'bg-warning/60',
+          burn === 'ok' && 'bg-[color:var(--bar)]/60',
+        )}
+        style={
+          {
+            width: `${Math.min(100, hoursUsedPct)}%`,
+            ['--bar' as never]: color,
+          } as React.CSSProperties
+        }
+        aria-hidden
+      />
+
+      <div className="pointer-events-none relative flex w-full items-center justify-between gap-2 px-2 text-[11px] font-medium text-foreground/85">
+        {showText && <span className="truncate">{primaryText}</span>}
+        {showPct && <span className="shrink-0 tabular-nums">{Math.round(hoursUsedPct)}%</span>}
       </div>
 
-      <div className="relative flex-1">
-        <div
-          role="button"
-          tabIndex={0}
-          aria-label={`${project.name}, ${format(parseISO(preview.start), 'd MMM')} to ${format(
-            parseISO(preview.end),
-            'd MMM yyyy',
-          )}${editable ? '. Drag or use arrow keys to reschedule.' : ''}`}
-          onPointerDown={beginDrag('move')}
-          onPointerMove={onPointerMove}
-          onPointerUp={endDrag}
-          onPointerCancel={endDrag}
-          onClick={onClick}
-          onKeyDown={onKeyDown}
-          title={`${project.name} · ${rangeText} · ${Math.round(hoursUsedPct)}% of quoted hours`}
-          className={cn(
-            'absolute top-1/2 flex h-8 -translate-y-1/2 items-center overflow-hidden rounded-md border shadow-sm outline-none',
-            'focus-visible:ring-2 focus-visible:ring-ring',
-            editable ? 'cursor-grab touch-none active:cursor-grabbing' : 'cursor-pointer',
-            drag && 'z-30 shadow-lg ring-2 ring-ring',
-            geo.clippedStart && 'rounded-l-none border-l-0',
-            geo.clippedEnd && 'rounded-r-none border-r-0',
-          )}
-          style={{
-            left: `${geo.leftPct}%`,
-            width: `${geo.widthPct}%`,
-            background: `${color}2e`,
-            borderColor: `${color}99`,
-          }}
-        >
-          {/* Hours-burn fill: how much of the quoted time is already spent. */}
-          <div
-            className={cn(
-              'absolute inset-y-0 left-0',
-              burn === 'over' && 'bg-destructive/60',
-              burn === 'near' && 'bg-warning/60',
-              burn === 'ok' && 'bg-[color:var(--bar)]/60',
-            )}
-            style={
-              {
-                width: `${Math.min(100, hoursUsedPct)}%`,
-                ['--bar' as never]: color,
-              } as React.CSSProperties
-            }
-            aria-hidden
-          />
-
-          <div className="pointer-events-none relative flex w-full items-center justify-between gap-2 px-2 text-[11px] font-medium text-foreground/85">
-            {showDates && <span className="truncate">{rangeText}</span>}
-            {showPct && (
-              <span className="shrink-0 tabular-nums">{Math.round(hoursUsedPct)}%</span>
-            )}
-          </div>
-
-          {editable && !geo.clippedStart && (
-            <ResizeHandle side="start" onPointerDown={beginDrag('resize-start')} />
-          )}
-          {editable && !geo.clippedEnd && (
-            <ResizeHandle side="end" onPointerDown={beginDrag('resize-end')} />
-          )}
-        </div>
-      </div>
+      {editable && !geo.clippedStart && (
+        <ResizeHandle side="start" onPointerDown={beginDrag('resize-start')} />
+      )}
+      {editable && !geo.clippedEnd && (
+        <ResizeHandle side="end" onPointerDown={beginDrag('resize-end')} />
+      )}
     </div>
   );
 }
@@ -661,11 +887,13 @@ function ResizeHandle({
 
 function UpcomingJobs({
   buckets,
+  partsFor,
   editable,
   horizonLabel,
   onSchedule,
 }: {
   buckets: ReturnType<typeof bucketJobs>;
+  partsFor: Map<string, ProjectScheduleBlock[]>;
   editable: boolean;
   horizonLabel: string;
   onSchedule: (p: Project) => void;
@@ -684,6 +912,7 @@ function UpcomingJobs({
           title="On site now"
           empty="Nothing running today."
           jobs={onSite}
+          partsFor={partsFor}
           note={(j) =>
             j.endsInDays < 0
               ? `over by ${Math.abs(j.endsInDays)} days`
@@ -696,6 +925,7 @@ function UpcomingJobs({
           title={`Starting in the next ${horizonLabel.toLowerCase()}`}
           empty="Nothing booked in this window."
           jobs={upcoming}
+          partsFor={partsFor}
           note={(j) => `starts ${relativeDayLabel(j.startsInDays)}`}
         />
 
@@ -704,6 +934,7 @@ function UpcomingJobs({
             title="Further out"
             empty=""
             jobs={later}
+            partsFor={partsFor}
             note={(j) => format(parseISO(j.project.start_date!), 'd MMM yyyy')}
           />
         )}
@@ -714,7 +945,7 @@ function UpcomingJobs({
               Not on the calendar yet
             </h3>
             <p className="mb-2 text-xs text-muted-foreground">
-              These have no start and end date, so they can't be plotted.
+              These have no dates, so they can't be plotted.
               {editable && ' Put one on next week and drag it to where it belongs.'}
             </p>
             <ul className="divide-y rounded-md border">
@@ -724,7 +955,10 @@ function UpcomingJobs({
                     className="h-2.5 w-2.5 shrink-0 rounded-full"
                     style={{ background: p.color_tag ?? FALLBACK_COLOR }}
                   />
-                  <Link to={`/projects/${p.id}`} className="flex-1 truncate text-sm font-medium hover:underline">
+                  <Link
+                    to={`/projects/${p.id}`}
+                    className="flex-1 truncate text-sm font-medium hover:underline"
+                  >
                     {p.name}
                   </Link>
                   {editable && (
@@ -746,16 +980,20 @@ function JobGroup({
   title,
   empty,
   jobs,
+  partsFor,
   note,
   overdue,
 }: {
   title: string;
   empty: string;
   jobs: ScheduledJob[];
+  partsFor: Map<string, ProjectScheduleBlock[]>;
   note: (j: ScheduledJob) => string;
   overdue?: (j: ScheduledJob) => boolean;
 }) {
   if (jobs.length === 0 && !empty) return null;
+  const todayIso = toISODate(new Date());
+
   return (
     <div>
       <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
@@ -765,30 +1003,48 @@ function JobGroup({
         <p className="text-sm text-muted-foreground">{empty}</p>
       ) : (
         <ul className="divide-y rounded-md border">
-          {jobs.map((j) => (
-            <li key={j.project.id}>
-              <Link
-                to={`/projects/${j.project.id}`}
-                className="flex items-center gap-3 px-3 py-2.5 hover:bg-accent"
-              >
-                <span
-                  className="h-2.5 w-2.5 shrink-0 rounded-full"
-                  style={{ background: j.project.color_tag ?? FALLBACK_COLOR }}
-                />
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-medium">{j.project.name}</p>
-                  <p className="truncate text-xs text-muted-foreground">
-                    {format(parseISO(j.project.start_date!), 'd MMM')} –{' '}
-                    {format(parseISO(j.project.end_date!), 'd MMM')} · {j.durationDays} days
-                    {j.project.client_name ? ` · ${j.project.client_name}` : ''}
-                  </p>
-                </div>
-                <Badge variant={overdue?.(j) ? 'warning' : 'secondary'} className="shrink-0">
-                  {note(j)}
-                </Badge>
-              </Link>
-            </li>
-          ))}
+          {jobs.map((j) => {
+            const parts = partsFor.get(j.project.id) ?? [];
+            // For a split job the envelope is misleading on its own — "17 Aug
+            // to 12 Oct" reads as eight solid weeks. Name the next block of
+            // work so the gap is visible in the list too.
+            const nextPart = parts.find((b) => b.end_date >= todayIso);
+            const nextIndex = nextPart ? parts.indexOf(nextPart) : -1;
+            return (
+              <li key={j.project.id}>
+                <Link
+                  to={`/projects/${j.project.id}`}
+                  className="flex items-center gap-3 px-3 py-2.5 hover:bg-accent"
+                >
+                  <span
+                    className="h-2.5 w-2.5 shrink-0 rounded-full"
+                    style={{ background: j.project.color_tag ?? FALLBACK_COLOR }}
+                  />
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-medium">{j.project.name}</p>
+                    <p className="truncate text-xs text-muted-foreground">
+                      {format(parseISO(j.project.start_date!), 'd MMM')} –{' '}
+                      {format(parseISO(j.project.end_date!), 'd MMM')} · {j.durationDays} days
+                      {j.project.client_name ? ` · ${j.project.client_name}` : ''}
+                    </p>
+                    {parts.length > 1 && nextPart && (
+                      <p className="truncate text-xs text-muted-foreground">
+                        <span className="font-medium text-foreground/70">
+                          {parts.length} parts
+                        </span>{' '}
+                        · next: {partLabel(nextPart, nextIndex)},{' '}
+                        {format(parseISO(nextPart.start_date), 'd MMM')} –{' '}
+                        {format(parseISO(nextPart.end_date), 'd MMM')}
+                      </p>
+                    )}
+                  </div>
+                  <Badge variant={overdue?.(j) ? 'warning' : 'secondary'} className="shrink-0">
+                    {note(j)}
+                  </Badge>
+                </Link>
+              </li>
+            );
+          })}
         </ul>
       )}
     </div>

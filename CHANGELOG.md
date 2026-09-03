@@ -6,6 +6,27 @@ Format: one section per session, newest on top. Each entry: what changed, why, f
 
 ---
 
+## 2026-09-03 (schedule parts) — a job that stops and comes back
+
+Alex, on seeing the board: "I don't mind it dragging over two pixels because we should be able to edit manually with a free text. The duration of a job… part A or part B of a job… because jobs can often start, then go away, then come back."
+
+One job = one continuous bar was wrong. A school is painted across a term and the following holidays; a repaint stops for three weeks waiting on colours or scaffold. The old model made a job that *paused* for six weeks look identical to one that *ran* for six weeks, hiding the gap the crew is actually free in. Full rationale in **[ADR 008](docs/decisions/008-schedule-parts.md)**.
+
+- **Migration** ([20260903000001_schedule_blocks.sql](supabase/migrations/20260903000001_schedule_blocks.sql)) — new `project_schedule_blocks` (label, start, end, optional `scope_id`, order), a `CHECK` that `end_date >= start_date`, and a `SECURITY DEFINER` trigger keeping `projects.start_date`/`end_date` as the **derived envelope** (earliest start, latest finish). That's what made this cheap: every existing reader keeps working against the same two columns, unchanged. Backfills one part per already-dated project. RLS mirrors `projects` — everyone reads, only admin writes.
+- **Verified against real Postgres** — applied the migration to a local Supabase and exercised it: envelope follows part insert/update/delete and collapses to null when the last part goes, `end < start` is rejected, project delete cascades its parts, and the manager can read parts but gets 0 rows / an RLS violation on update, insert and delete while the admin succeeds.
+- **Type the dates in** ([SchedulePartDialog.tsx](src/components/features/SchedulePartDialog.tsx)) — clicking a bar opens an editor with both dates, a free-text name, a live duration readout, Split and Remove. This is the precision path: at 6- and 12-month zooms a drag snaps to whole weeks, and it shouldn't be the only way to set a date. Save stays disabled until something changes and while the dates are invalid.
+- **Split** — cuts a part in two at its midpoint, leaving the first half put and the second half ready to drag to whenever the job resumes. The "goes away and comes back" flow in one action.
+- **Board renders one bar per part** ([Timeline.tsx](src/pages/Timeline.tsx)) — each independently draggable and resizable; dragging one leaves its siblings alone. Unnamed parts read "Part A", "Part B"… by calendar order. The row header shows "2 parts" instead of the client, the hours-burn `%` sits only on the last part, and a hover `+` adds another part the week after the job currently finishes.
+- **Parts are a *when*, scopes are a *what*** — `scope_id` on a part is nullable and unenforced. The same scope can be visited twice and one visit can cover several scopes, so reusing `project_scopes` for this would have been wrong.
+- **Jobs ahead names the next part** — "17 Aug – 30 Oct · 75 days" alone reads as eleven solid weeks, so a split job also shows "2 parts · next: Term 3 — B & C blocks, 17 Aug – 5 Sep".
+- **The project form stops pretending** ([ProjectForm.tsx](src/components/features/ProjectForm.tsx)) — for a single-part job its date fields now write **through** to that part (otherwise the trigger would silently overwrite whatever was typed); for a split job there's no single start and end, so it lists the parts read-only and links to the board. Also gave those two date inputs real `htmlFor`/`id` associations — they had none, so screen readers couldn't announce them.
+- **Demo** ([demo.ts](src/lib/demo.ts)) — Northcote is split across a term and the holidays, so the gap is visible out of the box. Fixture envelopes are derived from the parts the same way the trigger does it, so they can't drift.
+- **Tests** — 148 unit green (23 new part helpers: labels past Z, calendar ordering, envelope across a gap, split refusing to make an empty part); new [e2e/schedule-parts.spec.ts](e2e/schedule-parts.spec.ts) (12 cases) covering the split render, type-in editing, validation, rename, split, per-part drag isolation, add, removing the last part, both project-form paths and the manager's read-only board. Full Playwright suite **149 passed**.
+
+**Worth knowing for future e2e work.** A test that changed data in the project form and then re-checked it on the board failed — not a bug: demo mode holds its data in memory, and `page.goto()` is a full reload that resets the fixtures. Cross-page assertions in demo mode have to navigate in-app.
+
+---
+
 ## 2026-09-03 (schedule board) — move jobs around the calendar, see 30 days to 12 months
 
 Alex: "a list of upcoming jobs, and a way to modulate and move around on the calendar and resize, and create an underlay of what my next 30 to 60 or 12 months looks like depending on what size of the work I want."

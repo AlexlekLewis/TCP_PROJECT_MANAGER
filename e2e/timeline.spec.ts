@@ -30,6 +30,12 @@ test.describe('Schedule board', () => {
     await expect(page).toHaveURL(/\/projects\/p-northcote/);
   });
 
+  test('a bar click opens the part editor for the admin', async ({ page }) => {
+    await page.goto('/timeline');
+    await page.getByRole('button', { name: /Preston High School,/ }).click();
+    await expect(page.getByRole('dialog').getByText('Edit part')).toBeVisible();
+  });
+
   test('Later button advances the range, Today snaps back', async ({ page }) => {
     await page.goto('/timeline');
     const rangeBadge = page.locator('text=/\\d+ \\w+ – \\d+ \\w+ \\d{4}/').first();
@@ -68,7 +74,9 @@ test.describe('Schedule board', () => {
   test('dragging a bar reschedules the job', async ({ page, isMobile }) => {
     test.skip(!!isMobile, 'pointer drag is a desktop affordance');
     await page.goto('/timeline');
-    const bar = page.getByRole('button', { name: /Northcote High School,/ });
+    // Preston runs as a single part, so this stays about the drag itself —
+    // per-part dragging is covered in schedule-parts.spec.ts.
+    const bar = page.getByRole('button', { name: /Preston High School,/ });
     const before = await bar.getAttribute('aria-label');
 
     const box = await bar.boundingBox();
@@ -80,10 +88,7 @@ test.describe('Schedule board', () => {
     await page.mouse.move(box.x + box.width / 2 + 60, box.y + box.height / 2, { steps: 10 });
     await page.mouse.up();
 
-    await expect(page.getByRole('button', { name: /Northcote High School,/ })).not.toHaveAttribute(
-      'aria-label',
-      before ?? '',
-    );
+    await expect(bar).not.toHaveAttribute('aria-label', before ?? '');
   });
 
   test('arrow keys nudge a focused bar', async ({ page, isMobile }) => {
