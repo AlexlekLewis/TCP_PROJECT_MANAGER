@@ -76,6 +76,13 @@ Key invariants enforced by RLS / triggers (not UI):
 - `npm run e2e` — Playwright
 - `supabase start` / `supabase stop` — local Postgres for integration tests
 - `supabase migration new <name>` / `supabase db reset` / `supabase db push`
+  - **Don't `supabase db push` to production (tricoat-pm) yet.** Its history was
+    written by the Supabase MCP, which stamps each migration with the time it
+    ran, so none of its versions match the filenames here and the CLI sees two
+    unrelated histories. Reconciling them is an open decision; see CHANGELOG
+    2026-09-14. Commit anything you apply through the MCP as a migration file
+    in the same session: transcripts are pruned after about 30 days, after
+    which production holds the only copy of the SQL.
 - `supabase secrets set ANTHROPIC_API_KEY=...`
 - `supabase functions deploy parse-voice-log`
 - `vercel` / `vercel --prod`

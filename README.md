@@ -46,7 +46,8 @@ The app ships in demo mode. To point it at real Supabase + Claude + Vercel:
 supabase login
 supabase link --project-ref <your-ref>
 
-# 2. Push schema + RLS + seed
+# 2. Push schema + RLS + seed (fresh project only; for the existing
+#    tricoat-pm project, read CLAUDE.md → Commands first)
 supabase db push
 
 # 3. Set server-side secrets

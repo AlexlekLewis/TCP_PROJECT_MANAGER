@@ -6,6 +6,50 @@ Format: one section per session, newest on top. Each entry: what changed, why, f
 
 ---
 
+## 2026-09-14 (db history) — backfill the two migrations that only existed in production
+
+Found in passing on 2026-09-13: production's `supabase_migrations.schema_migrations` had two rows with no file anywhere in the repo or its git history. Both went on straight through the Supabase MCP and were never committed, so `supabase db reset` couldn't reproduce production.
+
+- **[20260903060215_lock_down_schedule_envelope_function.sql](supabase/migrations/20260903060215_lock_down_schedule_envelope_function.sql): verbatim.** Recovered from the Claude Code session that applied it. The `apply_migration` call returned success, and a privilege check straight afterwards showed anon and authenticated could no longer execute the function. It exists because the `schedule_blocks` SQL sent to production revoked `EXECUTE` on `sync_project_schedule_envelope()` from anon and authenticated only, which leaves the default `PUBLIC` grant. This closed that gap, and the repo's `schedule_blocks` file was then amended to revoke from `PUBLIC` as well, so on a fresh database the backfill is a no-op.
+- **[20260608153947_revoke_anon_select_on_definer_views.sql](supabase/migrations/20260608153947_revoke_anon_select_on_definer_views.sql): reconstructed, not yet verified.** The session that applied it is gone (Claude Code prunes transcripts after about 30 days, and the oldest on this machine is from August). This session also had no Supabase MCP connection, so neither the `statements` column nor the live grants could be read. It is rebuilt as `revoke select … from anon` on the three `SECURITY DEFINER` views that existed that day (`workers_visible`, `projects_visible`, `project_scopes_visible`), going by the migration's name. A local database built from the older files confirms anon did hold `SELECT` on all three. A security-audit template written minutes after it went on uses `revoke all … from anon, public`, so the real statement may be broader. **Check it against production before merging**; the query is in the file header.
+- **Verified from scratch:** `supabase db reset` applies all 19 files cleanly. It ran on a throwaway copy of the config on shifted ports, because another project's local stack already holds 54321/54322. After the reset, anon holds no `SELECT` on the three views (what the reconstruction intends), and neither anon nor authenticated can execute `sync_project_schedule_envelope()`, matching the check production returned on 2026-09-03.
+- **Checked against what production ran, where that SQL still exists:** `variation_labour` matches the repo file statement for statement (ignoring comments), and `schedule_blocks` differs only by that one revoke line.
+
+**The bigger problem: none of production's version numbers match a file here.** The MCP stamps each migration with the moment it ran; the repo uses hand-picked `…000001` versions. All 17 older files have a different version in production, and three have different names too. Production's history, from the MCP listings on 2026-09-03 and 2026-09-13:
+
+| Production version | Production name | Repo file |
+|---|---|---|
+| `20260522102206` | schema | `20260421000001_schema.sql` |
+| `20260522102228` | functions | `20260421000002_functions.sql` |
+| `20260522102251` | rls | `20260421000003_rls.sql` |
+| `20260522102302` | seed_workers | `20260421000004_seed.sql` |
+| `20260522102323` | security_hardening | `20260422000001_hardening.sql` |
+| `20260522102333` | per_task_and_warnings | `20260518000001_per_task_and_warnings.sql` |
+| `20260522102353` | payroll_integrity_hardening | `20260522000001_payroll_integrity_hardening.sql` |
+| `20260522102502` | lock_down_definer_function_exposure | `20260522000002_lock_down_definer_function_exposure.sql` |
+| `20260522104742` | hide_worker_rate_from_manager | `20260522000003_hide_worker_rate_from_manager.sql` |
+| `20260522110511` | restore_current_role_name_execute_to_authenticated | `20260522000004_restore_current_role_name_execute.sql` |
+| `20260522110856` | hide_project_budget_from_manager | `20260522000005_hide_project_budget_from_manager.sql` |
+| `20260522112907` | profit_model_rates_and_targets | `20260522000006_profit_model_rates_and_targets.sql` |
+| `20260522115752` | job_type_variations_and_manager_drafts | `20260522000007_job_type_variations_and_manager_drafts.sql` |
+| `20260525074223` | project_scopes | `20260524000001_project_scopes.sql` |
+| `20260608153947` | revoke_anon_select_on_definer_views | same version (backfilled here) |
+| `20260630221845` | manager_scopes_variations | `20260612000001_manager_scopes_variations.sql` |
+| `20260824015410` | variation_labour | `20260816000001_variation_labour.sql` |
+| not captured (applied 2026-09-03 06:00 UTC) | schedule_blocks | `20260903000001_schedule_blocks.sql` |
+| `20260903060215` | lock_down_schedule_envelope_function | same version (backfilled here) |
+
+So `supabase db push` against tricoat-pm will still refuse. The way out the CLI suggests (`supabase migration repair --status reverted …`) would strip production's history rows, and the next push would then try to re-run all 19 migrations against the live schema. **Don't `db push` to production** until one of these is chosen:
+
+1. **Rename the 17 files to production's versions.** Repo-only, no production writes. Read `schedule_blocks`' exact version live first.
+2. **Run `supabase migration repair` to rewrite production's history rows to the repo's versions.** Filenames stay as they are, but it writes to production.
+
+**Lesson:** commit anything applied through the MCP in the same session. Once the transcript is pruned, the only copy of the SQL is in production itself.
+
+- Docs: [CLAUDE.md](CLAUDE.md) (Commands: don't `db push` to production) and [README.md](README.md) (Going live step 2 is for a fresh project).
+
+---
+
 ## 2026-09-03 (one screen) — calendar and what's on, side by side
 
 Alex, after using it: "one thing that I don't like is multiple screens for the sake of multiple screens. When I open the schedule, I want to see the calendar and I want to be able to have the jobs that are coming up to the side… pretend a 12-year-old needs to be able to use the system."
