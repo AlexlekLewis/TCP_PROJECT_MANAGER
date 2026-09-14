@@ -1,0 +1,30 @@
+-- =============================================================================
+-- BACKFILL: applied to production directly, not committed until 2026-09-14.
+--
+-- Production (tricoat-pm, ref kihptbwdbkqmopnrtdew) records this as version
+-- 20260903060215 `lock_down_schedule_envelope_function`. It was applied through
+-- the Supabase MCP `apply_migration` tool on 2026-09-03 at 06:02:15 UTC, just
+-- over a minute after `schedule_blocks`, and never reached this directory or
+-- git history, so `supabase db reset` could not reproduce production.
+--
+-- DO NOT re-apply to production. It is already live; this file exists so the
+-- repo's migration chain matches what production actually ran.
+--
+-- The SQL below the header is verbatim what was sent to `apply_migration`,
+-- recovered from the Claude Code session that applied it. The call returned
+-- success, and a has_function_privilege check straight afterwards showed
+-- neither anon nor authenticated could still execute the function.
+--
+-- Why it exists: the `schedule_blocks` SQL applied to production revoked
+-- EXECUTE from anon and authenticated only. That leaves the default PUBLIC
+-- grant in place, so the trigger function was still reachable at
+-- /rest/v1/rpc/. This closed it on production, and
+-- 20260903000001_schedule_blocks.sql was then amended to revoke from PUBLIC too.
+-- On a fresh database the statement below is therefore a no-op.
+-- =============================================================================
+
+-- `create function` grants EXECUTE to PUBLIC by default, and revoking from
+-- anon/authenticated does not remove that grant — so the trigger function was
+-- still reachable at /rest/v1/rpc/sync_project_schedule_envelope.
+-- Same treatment as 20260522000002_lock_down_definer_function_exposure.sql.
+revoke execute on function sync_project_schedule_envelope() from public, anon, authenticated;
