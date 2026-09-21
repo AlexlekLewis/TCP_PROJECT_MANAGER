@@ -32,11 +32,23 @@ Run: `npm run test:unit`. Must be green pre-PR.
 
 ## Integration — Vitest + Supabase local
 
-**Scope**: code + database + Edge Functions, mocked external services.
+**Scope**: code + database, real RLS. Shipped 2026-09-21; see [ADR 009](../decisions/009-integration-tests.md) and [tests/integration/README.md](../../tests/integration/README.md).
 
-Setup: `supabase start` (Docker). Uses the real Postgres with migrations applied + seed data. Anthropic client is mocked (canned responses).
+Run: `npm run test:integration`. Starts a disposable, port-shifted local stack (Docker), applies the migrations and runs the suite. `npm run test` skips it unless `SUPABASE_TEST_URL` / `SUPABASE_TEST_ANON_KEY` / `SUPABASE_TEST_SERVICE_ROLE_KEY` are set, so the unit job stays a unit job.
 
-Test matrices:
+What it does differently from every other suite here: it signs in two real users (admin + manager) and drives **the app's own hooks** — `useProjects`, `useProjectScopes`, `useProjectVariations`, `useTimeEntries`, `useWeekLocks` — so the supabase-js chain that reaches Postgres is the one the app ships. Demo mode is forced off. Ground truth is read back with a service-role client, because neither user is allowed to read the base tables' money columns.
+
+Covered today:
+- manager adds + edits a scope and logs a variation; the guard triggers null the $ columns on insert and preserve the admin's prices on update
+- manager gets 42501 selecting, filtering or ordering on `quoted_price` / `materials_budget` / `target_profit` / `amount`, and reads them as null through the `*_visible` views
+- manager cannot delete a scope, or price / approve / delete a variation (0 rows, row unchanged)
+- manager files a draft project but cannot create a priced one or rename an existing one
+- hours: `created_by` attribution, the 14-hour CHECK, scope/variation exclusivity, the cross-project variation trigger, and the week lock
+- the admin equivalents of all of the above
+
+Edge Functions are **not** covered yet — the matrix below is still a plan.
+
+Test matrices (planned):
 
 ### RLS matrix (one spec per table)
 From Shared Protocols + week-lock specifics:
@@ -131,26 +143,13 @@ Fixtures live in `tests/fixtures/voice/`. Alex (or Gavin) can add new ones as ed
 
 ```yaml
 jobs:
-  ci:
-    steps:
-      - checkout
-      - setup node
-      - npm ci
-      - npm run lint
-      - npm run typecheck
-      - npm run test:unit
-      - start supabase local (docker)
-      - npm run test:integration
-      - npm run build
-      - secret-scan (grep for forbidden patterns)
-  e2e:
-    needs: ci
-    steps:
-      - wait for Vercel preview URL
-      - npx playwright test --config=e2e/playwright.config.ts
+  build-and-test:      # lint, typecheck, unit tests, build, secret scan
+  e2e:                 # needs: build-and-test — Playwright in demo mode
 ```
 
 Merges to `main` blocked on green CI + E2E.
+
+An `integration` job (local Supabase stack + `tests/integration`) is written but not yet added — the YAML is in [tests/integration/README.md](../../tests/integration/README.md). It should land as `continue-on-error` while its four known failures stand, and become a gate once they're fixed — see [ADR 009](../decisions/009-integration-tests.md) §6.
 
 ## Manual QA checklist (pre-launch + per-release)
 

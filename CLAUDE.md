@@ -22,6 +22,7 @@ Mobile-first internal tool for a 4-person painting crew: log daily labour hours 
 - [ADR 006 — Variation labour (who/when/how many hours per variation)](docs/decisions/006-variation-labour.md)
 - [ADR 007 — Schedule board (drag/resize jobs, 30d–12m underlay)](docs/decisions/007-schedule-board.md)
 - [ADR 008 — Schedule parts (a job as several date blocks)](docs/decisions/008-schedule-parts.md)
+- [ADR 009 — Integration tests against a real Postgres](docs/decisions/009-integration-tests.md)
 - [CHANGELOG](CHANGELOG.md) — append-only session log
 
 ## Stack (shipped)
@@ -33,8 +34,8 @@ Mobile-first internal tool for a 4-person painting crew: log daily labour hours 
 - **AI**: Anthropic Claude Haiku 4.5 via Supabase Edge Function `parse-voice-log`
 - **Voice**: Web Speech API (browser-native, on-device)
 - **Hosting**: Vercel
-- **Testing**: Vitest (unit) — 148 green · Playwright (E2E smoke)
-- **CI**: GitHub Actions (lint + typecheck + test + build + secret-scan + Playwright)
+- **Testing**: Vitest (unit) — 149 green · Vitest + local Supabase ([tests/integration](tests/integration/README.md)) — 44, of which 4 are red on purpose · Playwright (E2E smoke, demo mode)
+- **CI**: GitHub Actions (lint + typecheck + test + build + secret-scan + Playwright). The integration suite needs Docker and isn't wired into CI yet — [job YAML ready to paste](tests/integration/README.md#ci)
 
 ## Data model (Postgres)
 
@@ -72,9 +73,11 @@ Key invariants enforced by RLS / triggers (not UI):
 - `npm run dev` — Vite dev server (http://localhost:5173)
 - `npm run build` — production build to `dist/`
 - `npm run lint` / `npm run typecheck`
-- `npm run test` (or `test:watch`) — Vitest
+- `npm run test` (or `test:watch`) — Vitest unit; skips `tests/integration` unless the local-stack env vars are set
+- `npm run test:integration` — starts a disposable, port-shifted local stack and runs `tests/integration`
+- `npm run stack:up` / `stack:down` — that stack, by hand (`stack:up` prints its env vars)
 - `npm run e2e` — Playwright
-- `supabase start` / `supabase stop` — local Postgres for integration tests
+- `supabase start` / `supabase stop` — local Postgres (the *default-port* stack; the integration suite runs its own)
 - `supabase migration new <name>` / `supabase db reset` / `supabase db push`
 - `supabase secrets set ANTHROPIC_API_KEY=...`
 - `supabase functions deploy parse-voice-log`
@@ -122,7 +125,14 @@ supabase/
   functions/parse-voice-log/    Claude Haiku tool-use parse
   functions/weekly-backup/      CSV export email (Sun 23:00)
 
-e2e/                      Playwright specs (smoke suite)
+e2e/                      Playwright specs (smoke suite, demo mode)
+tests/integration/        The app's own hooks against a real Postgres.
+                          Signs in an admin + a manager for real; exercises
+                          RLS, column grants and the guard triggers. Skipped
+                          by `npm run test` without a local stack.
+scripts/
+  integration-stack.mjs   Generates + runs that stack (own ports, own
+                          project_id, prod-like default privileges)
 docs/                     PRD, challenge, ADRs, testing strategy
 ```
 
@@ -136,6 +146,7 @@ docs/                     PRD, challenge, ADRs, testing strategy
 - Money: `numeric(10,2)` / `numeric(12,2)` in DB; AUD everywhere in UI
 - Hours: `numeric(5,2)`, validated `0 < h ≤ 14`
 - Prefer demo-mode-safe code paths: every hook short-circuits via `env.demoMode`
+- …which is exactly why a hook's Postgres path can be broken with every suite green. Anything touching RLS, grants or a trigger needs a case in [tests/integration](tests/integration/README.md)
 
 ## Persistent memory workflow
 

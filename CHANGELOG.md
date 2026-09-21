@@ -6,6 +6,33 @@ Format: one section per session, newest on top. Each entry: what changed, why, f
 
 ---
 
+## 2026-09-21 (integration tests) — run the hooks against a real Postgres
+
+Nothing in this repo had ever executed an RLS policy. Every hook short-circuits on `env.demoMode`, both Playwright suites run with `VITE_DEMO_MODE=true`, and CI runs those. So the layer where most of this app's rules actually live — the manager's $-blindness, the week lock, the guard triggers, `created_by` attribution — was untested, and on 2026-09-16 all three of Gavin's writes from [ADR 005](docs/decisions/005-manager-scopes-variations.md) turned out to have been broken on a real database while every suite stayed green.
+
+New `tests/integration` suite: **44 tests, 40 green, 4 red** — and the four reds are the point. Rationale in **[ADR 009](docs/decisions/009-integration-tests.md)**.
+
+- **It drives the app's own hooks** ([runHook.tsx](tests/integration/helpers/runHook.tsx), [activeClient.ts](tests/integration/helpers/activeClient.ts)) — `@/lib/supabase` is mocked to whichever signed-in client the test has made current and `env.demoMode` is forced false, so `useCreateScope`, `useUpdateScope`, `useCreateVariation`, `useCreateProject`, `useCreateTimeEntry`, `useLockWeek` and the read hooks send Postgres the exact chain the app ships. Not a copy of the queries: the thing that broke *was* the shape of the chain (`insert(...).select('id').single()`, `update(patch).eq('id', id)`), and a copy drifts at the first refactor.
+- **Two real users** ([users.ts](tests/integration/helpers/users.ts), [globalSetup.ts](tests/integration/globalSetup.ts)) — created through the GoTrue admin API with passwords and a `profiles` row each, because `is_admin()`/`is_manager()` read that row. Service-role clients appear only to assert ground truth; neither user can read the base tables' money columns, so neither can testify to what's on disk.
+- **Coverage** — manager adds + edits a scope and logs a variation (trigger nulls the $ on insert, preserves the admin's prices on update); manager gets 42501 selecting, filtering *or* ordering on `quoted_price` / `materials_budget` / `target_profit` / `amount` across `projects`, `project_scopes`, `project_variations`, and reads them null through the `*_visible` views while the admin reads them real; manager can't delete a scope or price/approve/delete a variation; manager files a draft project but can't create a priced one or rename an existing one; hours get `created_by` attribution, the 14-hour CHECK, scope/variation exclusivity, the cross-project variation trigger and the week lock; and the admin equivalents of all of it.
+- **`npm run test` skips it** unless `SUPABASE_TEST_URL` / `SUPABASE_TEST_ANON_KEY` / `SUPABASE_TEST_SERVICE_ROLE_KEY` are set — 149 unit green, 44 skipped — so CI's existing job is untouched. `npm run test:integration` starts the stack and injects them; `npm run stack:up` / `stack:down` drive it by hand.
+- **The stack is a generated copy of `supabase/`** ([scripts/integration-stack.mjs](scripts/integration-stack.mjs)) run through `supabase --workdir`, on shifted ports (54421/54422) under its own `project_id`, so another project's local stack can keep 54321/54322. The CLI is reached via `npx`; it's a devDependency and usually isn't on PATH. Nothing outside loopback is allowed — the helpers refuse a non-local `SUPABASE_TEST_URL`.
+- **Two config facts that cost time.** `[auth.email] enable_signup = false` in the real config is the email *provider* switch in current GoTrue, not just the sign-up switch — with it off, password sign-in is refused outright, so the copy turns it on while leaving public sign-up off via `[auth] enable_signup = false`. And the current CLI gives `anon`/`authenticated`/`service_role` only TRUNCATE/REFERENCES/TRIGGER/MAINTAIN on new tables, where production was created with grant-all default privileges; without restoring them every write fails on a missing grant before RLS is ever consulted. The copy prepends a `00000000000000_local_default_privileges.sql` that sets them before the first `create table`. Granting the tables explicitly in a real migration is the right end state, tracked separately — it needs the production migration-history drift resolved first.
+- **CI** — an `integration` job running `supabase start` + the suite is written but **not** in this PR: the token has no `workflow` OAuth scope, so `.github/workflows/ci.yml` couldn't be pushed. The YAML is in [tests/integration/README.md](tests/integration/README.md), ready to paste. It should land `continue-on-error` while the four known failures stand — a red required check on every PR just gets switched off — and become a gate once it's green.
+
+**The four red tests, each a real bug:**
+
+| Test | Bug |
+| --- | --- |
+| manager adds a scope | `useCreateScope`'s `insert … returning id` → 42501 |
+| manager edits a scope | `useUpdateScope`'s `update … where id` → **0 rows, no error** |
+| manager logs a variation | `useCreateVariation`'s `insert … returning id` → 42501 |
+| admin locks a week | `useLockWeek` omits `locked_by`, which is `not null` with no default → 23502 |
+
+The first three share one cause (no manager SELECT policy on `project_scopes` / `project_variations`; Postgres applies SELECT policies to the rows a write reads) and the migration for it is already written on `fix/tighten-view-grants` — applying it to a local stack turns all three green, which is how the suite was verified as asserting the right thing. **The fourth is new and unfixed: the admin cannot lock a week at all against a real database.** Payroll's freeze has never worked outside demo mode.
+
+---
+
 ## 2026-09-03 (one screen) — calendar and what's on, side by side
 
 Alex, after using it: "one thing that I don't like is multiple screens for the sake of multiple screens. When I open the schedule, I want to see the calendar and I want to be able to have the jobs that are coming up to the side… pretend a 12-year-old needs to be able to use the system."
