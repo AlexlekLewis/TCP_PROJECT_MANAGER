@@ -25,6 +25,7 @@ import { formatCurrency } from '@/lib/currency';
 import { formatHours } from '@/lib/hours';
 import { useCanSeeFinancials } from '@/lib/permissions';
 import { cn } from '@/lib/utils';
+import { errorMessage } from '@/lib/errors';
 import { toast } from 'sonner';
 import type {
   MaterialEntry,
@@ -149,7 +150,7 @@ export function ScopesSection({
                   toast.success(`Deleted scope "${deleting.name}"`);
                   setDeleting(null);
                 } catch (e) {
-                  toast.error(e instanceof Error ? e.message : 'Delete failed');
+                  toast.error(errorMessage(e, 'Delete failed'));
                 }
               }}
             >
@@ -335,7 +336,7 @@ function ScopeDialog({
       setStatus('active');
       setNotes('');
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Save failed');
+      toast.error(errorMessage(e, 'Save failed'));
     }
   };
 

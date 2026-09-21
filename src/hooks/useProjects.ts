@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { env } from '@/lib/env';
+import { assertRowsAffected } from '@/lib/errors';
 import { queryKeys } from '@/lib/queryKeys';
 import { demoStore } from '@/lib/demoStore';
 import { useDemoStore } from './useDemoStore';
@@ -74,8 +75,16 @@ export function useUpdateProject() {
         demoStore.updateProject(id, patch);
         return;
       }
-      const { error } = await supabase.from('projects').update(patch).eq('id', id);
+      // Read back the row the UPDATE touched. RLS filters a disallowed row
+      // out silently (204, zero rows), so "no error" alone doesn't mean the
+      // project changed. `projects` grants `select (id)` to authenticated.
+      const { data, error } = await supabase
+        .from('projects')
+        .update(patch)
+        .eq('id', id)
+        .select('id');
       if (error) throw error;
+      assertRowsAffected(data, 'project');
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.projects() }),
   });
@@ -108,7 +117,11 @@ export function useDeleteProject() {
         demoStore.deleteProject(id);
         return;
       }
-      const { error } = await supabase.from('projects').delete().eq('id', id);
+      const { data, error } = await supabase
+        .from('projects')
+        .delete()
+        .eq('id', id)
+        .select('id');
       if (error) {
         // Supabase FK violation: force the admin towards archive
         if (/foreign key/i.test(error.message)) {
@@ -118,6 +131,7 @@ export function useDeleteProject() {
         }
         throw error;
       }
+      assertRowsAffected(data, 'project', 'delete');
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.projects() }),
   });

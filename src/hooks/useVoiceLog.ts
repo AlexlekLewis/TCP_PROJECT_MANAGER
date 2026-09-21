@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { env } from '@/lib/env';
 import { supabase } from '@/lib/supabase';
 import { toISODate } from '@/lib/dates';
+import { errorMessage } from '@/lib/errors';
 import type { ParsedVoiceResult } from '@/types/db';
 
 // ---------- Web Speech API typings ----------
@@ -76,7 +77,7 @@ export function useVoiceLog({ onResult, onError }: UseVoiceLogOptions) {
         onResult(t, parsed);
         setState('done');
       } catch (e) {
-        const msg = e instanceof Error ? e.message : 'Parse failed';
+        const msg = errorMessage(e, 'Parse failed');
         setError(msg);
         setState('error');
         onError?.(msg);

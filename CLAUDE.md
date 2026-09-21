@@ -33,7 +33,7 @@ Mobile-first internal tool for a 4-person painting crew: log daily labour hours 
 - **AI**: Anthropic Claude Haiku 4.5 via Supabase Edge Function `parse-voice-log`
 - **Voice**: Web Speech API (browser-native, on-device)
 - **Hosting**: Vercel
-- **Testing**: Vitest (unit) — 148 green · Playwright (E2E smoke)
+- **Testing**: Vitest (unit) — 165 green · Playwright (E2E smoke)
 - **CI**: GitHub Actions (lint + typecheck + test + build + secret-scan + Playwright)
 
 ## Data model (Postgres)
@@ -65,6 +65,13 @@ Key invariants enforced by RLS / triggers (not UI):
   entry, and week locks don't apply. See [ADR 007](docs/decisions/007-schedule-board.md)
   + [ADR 008](docs/decisions/008-schedule-parts.md).
 - Manager (Gavin) is financially blind: he can add scopes (hours only) + edit them, and log unpriced `pending` variations, but the $ columns are forced null/preserved by triggers and masked on read (`*_visible` views). Scope delete, variation pricing + approval are admin-only. See [ADR 005](docs/decisions/005-manager-scopes-variations.md).
+- A write RLS filters out is **not** an error: Postgres affects zero rows and
+  PostgREST answers 204, so `if (error) throw` alone reports it as a success.
+  Every update/delete hook asks for the row it touched (`.select('id')`) and
+  runs it through `assertRowsAffected` ([errors.ts](src/lib/errors.ts)). Inserts
+  don't need it — a `WITH CHECK` violation does raise. `workers` is the one
+  exception: `authenticated` has no SELECT grant on it at all, which also means
+  worker create/update currently fail in live mode (see the hook comments).
 - Service-role key never touches user-input code paths.
 
 ## Commands
@@ -108,6 +115,7 @@ src/
   hooks/                  TanStack Query hooks per entity + useVoiceLog
   lib/                    supabase, env, dates (Mon-start), currency (AUD),
                           hours (14h cap), fuzzyMatch, aggregations,
+                          errors (readable messages + 0-row write guard),
                           claudePrompt (shared with Edge Function),
                           voiceParser, demo + demoStore, csv,
                           schedule (board geometry, drag maths, parts)
@@ -136,6 +144,9 @@ docs/                     PRD, challenge, ADRs, testing strategy
 - Money: `numeric(10,2)` / `numeric(12,2)` in DB; AUD everywhere in UI
 - Hours: `numeric(5,2)`, validated `0 < h ≤ 14`
 - Prefer demo-mode-safe code paths: every hook short-circuits via `env.demoMode`
+- Error toasts use `errorMessage(e, fallback)` — supabase-js rejects with a
+  `PostgrestError`, which is not an `Error`, so `e instanceof Error` silently
+  swallows the database's message
 
 ## Persistent memory workflow
 

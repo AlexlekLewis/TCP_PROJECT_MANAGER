@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { env } from '@/lib/env';
+import { assertRowsAffected } from '@/lib/errors';
 import { queryKeys } from '@/lib/queryKeys';
 import { demoStore } from '@/lib/demoStore';
 import { useDemoStore } from './useDemoStore';
@@ -42,8 +43,16 @@ export function useUnlockWeek() {
         demoStore.unlockWeek(weekStartIso);
         return;
       }
-      const { error } = await supabase.from('week_locks').delete().eq('week_start', weekStartIso);
+      // Unlocking is admin-only. A manager's delete matches no row he's
+      // allowed to see and returns no error, so check the week really came
+      // back open before the UI says it did.
+      const { data, error } = await supabase
+        .from('week_locks')
+        .delete()
+        .eq('week_start', weekStartIso)
+        .select('week_start');
       if (error) throw error;
+      assertRowsAffected(data, 'week lock', 'delete');
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.weekLocks() }),
   });

@@ -28,6 +28,7 @@ import {
 } from '@/hooks/useScheduleBlocks';
 import { useAuth } from '@/context/AuthContext';
 import { partLabel, sortParts } from '@/lib/schedule';
+import { errorMessage } from '@/lib/errors';
 import type { Project, ProjectStatus, QuoteType } from '@/types/db';
 
 interface Props {
@@ -128,7 +129,7 @@ export function ProjectForm({ open, onClose, project }: Props) {
       onClose();
       setForm(defaultForm(isAdmin));
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Save failed');
+      toast.error(errorMessage(e, 'Save failed'));
     }
   };
 

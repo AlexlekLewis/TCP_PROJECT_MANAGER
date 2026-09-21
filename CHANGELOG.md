@@ -6,6 +6,34 @@ Format: one section per session, newest on top. Each entry: what changed, why, f
 
 ---
 
+## 2026-09-21 (honest saves) — a save that didn't happen no longer looks like one that did
+
+Found while reproducing the manager RLS bug in live mode (`VITE_DEMO_MODE=false`, signed in as the manager against a local Supabase): the dialogs were hiding database failures. Three separate ways, all of which end with the user believing the work is saved.
+
+- **A failed variation add said nothing at all** ([VariationsSection.tsx](src/components/features/VariationsSection.tsx)) — `VariationDialog.submit` awaited `onSubmit(...)` with no `catch`, and the caller toasts success only after the insert resolves. A rejected insert therefore produced an unhandled rejection, no toast, and a dialog that just sat there: pressing **Add** looked like it did nothing. It now mirrors `ScopeDialog` — the error is toasted and the typed-in work stays in the form so it can be retried.
+- **"Save failed" instead of the reason** ([errors.ts](src/lib/errors.ts)) — every error toast in the app read `e instanceof Error ? e.message : 'Save failed'`, but supabase-js rejects with a `PostgrestError`, which is a plain object and fails that check. The database's actual message was thrown away at every single call site. New `errorMessage(value, fallback)` reads `message`, then `details`, then `hint` off anything object-shaped, so a real `Error` and a `PostgrestError` both come through. Swapped in at all 15 toasts plus the voice-parse error path.
+- **"Scope updated" over a row that never changed** (the update hooks) — Postgres doesn't raise when RLS filters a row out of an `UPDATE`/`DELETE`; the statement simply affects zero rows, and PostgREST answers 204. Checking only `error` reported that as success. Every update and delete hook now asks for the row it touched (`.update(patch).eq('id', id).select('id')`) and `assertRowsAffected` throws when the array comes back empty: [scopes](src/hooks/useProjectScopes.ts), [variations](src/hooks/useProjectVariations.ts), [projects](src/hooks/useProjects.ts), [time entries](src/hooks/useTimeEntries.ts), [schedule parts](src/hooks/useScheduleBlocks.ts), [material entries](src/hooks/useMaterialEntries.ts), [week locks](src/hooks/useWeekLocks.ts). Inserts already fail loudly — a `WITH CHECK` violation is an error — so they're left alone.
+- **`select('id')` is readable by both roles.** `projects`, `project_scopes` and `project_variations` revoke table-wide SELECT from `authenticated` but grant `select (id)` back; the rest grant SELECT in full. Where the caller also needs a SELECT *policy* and doesn't have one — the manager on `project_scopes`, until the pending `*_manager_select_scopes_variations` migration is applied — the update really does change nothing, and reporting that as an error is the correct outcome.
+- **Demo mode is untouched.** Every hook still short-circuits on `env.demoMode` before reaching Supabase, so none of this runs against the fixtures.
+
+**Verified against real Postgres.** A scratch `supabase/postgres:17.6.1.132` with all 17 migrations applied, an admin and a manager profile, and one row per table, exercising each hook's exact statement under `set role authenticated`:
+
+| as | statement | before | with `returning id` |
+| --- | --- | --- | --- |
+| manager | `update project_scopes … where id` | `UPDATE 0`, no error | 0 rows → now throws |
+| manager | `update projects` / `project_variations` / `project_schedule_blocks` | `UPDATE 0`, no error | 0 rows → now throws |
+| manager | `delete from time_entries` in a **locked** week | `DELETE 0`, no error | 0 rows → now throws |
+| manager | `delete from week_locks` (unlock) | `DELETE 0`, no error | 0 rows → now throws |
+| admin | all of the above | affected 1 | returns the id ✓ |
+
+The admin's audited locked-week edit still returns its row, so the audit path is unaffected.
+
+**Found along the way, not fixed here: worker edits can't work in live mode at all.** `20260522000003` revoked SELECT on `workers` to hide the pay rates but — unlike `projects`, `project_scopes` and `project_variations`, which each grant `select (id)` back — granted nothing back. Postgres needs SELECT on every column a statement reads, so `update workers set … where id = $1` fails with `permission denied for table workers` even for the admin, and `useCreateWorker`'s `.select()` (`RETURNING *`) fails the same way. Both confirmed on the scratch database. That's a loud failure rather than a silent one, so the dialog does show it, and `useUpdateWorker` is the one update hook with no row check — it has nothing it's allowed to read back. The fix is one grant line in a migration; it needs a read-only look at production first and Alex's go-ahead, so it stays out of this PR. Noted in [useWorkers.ts](src/hooks/useWorkers.ts).
+
+- **Tests** — 165 unit green. +12 for [errors.test.ts](src/lib/errors.test.ts), covering a `PostgrestError` that isn't an `Error`, the `details`/`hint` fallbacks and both wordings of the zero-rows guard; +4 for [VariationsSection.test.tsx](src/components/features/VariationsSection.test.tsx), the first component test in the repo, driving the dialog with a rejecting `onAdd` to prove the database message reaches a toast and the typed work survives. Playwright in demo mode: 139 passed, 3 skipped. The 4 failures in [schedule-parts.spec.ts](e2e/schedule-parts.spec.ts) are pre-existing and date-dependent — the demo fixtures build their dates from `new Date()` while those two tests assert hard-coded ones ("24 Aug to 25 Sep 2026"), so they only pass during the week they were written. Same 4 fail on the parent commit with none of this change applied.
+
+---
+
 ## 2026-09-03 (one screen) — calendar and what's on, side by side
 
 Alex, after using it: "one thing that I don't like is multiple screens for the sake of multiple screens. When I open the schedule, I want to see the calendar and I want to be able to have the jobs that are coming up to the side… pretend a 12-year-old needs to be able to use the system."

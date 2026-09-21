@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { env } from '@/lib/env';
+import { assertRowsAffected } from '@/lib/errors';
 import { queryKeys } from '@/lib/queryKeys';
 import { demoStore } from '@/lib/demoStore';
 import { useDemoStore } from './useDemoStore';
@@ -74,11 +75,16 @@ export function useUpdateScheduleBlock() {
         demoStore.updateScheduleBlock(id, patch);
         return;
       }
-      const { error } = await supabase
+      // Admin-only write under RLS; a manager's drag comes back 204 with zero
+      // rows and no error. Read the id back so the board can roll the bar
+      // straight back instead of leaving it where it was dropped.
+      const { data, error } = await supabase
         .from('project_schedule_blocks')
         .update(patch)
-        .eq('id', id);
+        .eq('id', id)
+        .select('id');
       if (error) throw error;
+      assertRowsAffected(data, 'schedule part');
     },
     onSuccess: invalidate,
   });
@@ -92,8 +98,13 @@ export function useDeleteScheduleBlock() {
         demoStore.deleteScheduleBlock(id);
         return;
       }
-      const { error } = await supabase.from('project_schedule_blocks').delete().eq('id', id);
+      const { data, error } = await supabase
+        .from('project_schedule_blocks')
+        .delete()
+        .eq('id', id)
+        .select('id');
       if (error) throw error;
+      assertRowsAffected(data, 'schedule part', 'delete');
     },
     onSuccess: invalidate,
   });

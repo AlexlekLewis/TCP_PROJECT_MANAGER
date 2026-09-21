@@ -22,6 +22,7 @@ import { supabase } from '@/lib/supabase';
 import { validateHours } from '@/lib/hours';
 import { useQueryClient } from '@tanstack/react-query';
 import { queryKeys } from '@/lib/queryKeys';
+import { errorMessage } from '@/lib/errors';
 
 interface Props {
   transcript: string;
@@ -122,7 +123,7 @@ export function VoiceReview({ transcript, initial, workers, projects, onCancel, 
       }
       onSaved();
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Save failed');
+      toast.error(errorMessage(e, 'Save failed'));
     } finally {
       setSaving(false);
     }

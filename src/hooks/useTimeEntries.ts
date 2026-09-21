@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { env } from '@/lib/env';
+import { assertRowsAffected } from '@/lib/errors';
 import { queryKeys } from '@/lib/queryKeys';
 import { demoStore } from '@/lib/demoStore';
 import { useDemoStore } from './useDemoStore';
@@ -109,8 +110,16 @@ export function useUpdateTimeEntry() {
         demoStore.updateTimeEntry(id, patch);
         return;
       }
-      const { error } = await supabase.from('time_entries').update(patch).eq('id', id);
+      // A week lock or an RLS policy filters the row out rather than raising,
+      // so an update that changed nothing looks identical to one that worked.
+      // Read the touched id back and let the caller tell the difference.
+      const { data, error } = await supabase
+        .from('time_entries')
+        .update(patch)
+        .eq('id', id)
+        .select('id');
       if (error) throw error;
+      assertRowsAffected(data, 'time entry');
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.timeEntries() }),
   });
@@ -124,8 +133,13 @@ export function useDeleteTimeEntry() {
         demoStore.deleteTimeEntry(id);
         return;
       }
-      const { error } = await supabase.from('time_entries').delete().eq('id', id);
+      const { data, error } = await supabase
+        .from('time_entries')
+        .delete()
+        .eq('id', id)
+        .select('id');
       if (error) throw error;
+      assertRowsAffected(data, 'time entry', 'delete');
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.timeEntries() }),
   });
