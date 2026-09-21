@@ -15,6 +15,7 @@ import {
 } from '@/components/ui/dialog';
 import { useCreateWorker, useUpdateWorker, useWorkers } from '@/hooks/useWorkers';
 import { formatCurrency } from '@/lib/currency';
+import { errorMessage } from '@/lib/errors';
 import type { Worker } from '@/types/db';
 
 export default function WorkersPage() {
@@ -115,7 +116,7 @@ function WorkerDialog({
       setWeeklyWage('');
       setChargeOut('65');
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Save failed');
+      toast.error(errorMessage(e, 'Save failed'));
     }
   };
 

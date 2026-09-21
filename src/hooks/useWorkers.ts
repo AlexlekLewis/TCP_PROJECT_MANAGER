@@ -28,6 +28,9 @@ export function useCreateWorker() {
   return useMutation({
     mutationFn: async (input: Omit<Worker, 'id' | 'created_at'>) => {
       if (env.demoMode) return demoStore.createWorker(input);
+      // `.select()` is `RETURNING *`, which hits the same missing grant as
+      // useUpdateWorker below — "permission denied for table workers" in live
+      // mode. Left as-is: the fix is the grant, not the query.
       const { data, error } = await supabase.from('workers').insert(input).select().single();
       if (error) throw error;
       return data as Worker;
@@ -44,6 +47,16 @@ export function useUpdateWorker() {
         demoStore.updateWorker(id, patch);
         return;
       }
+      // No `.select('id')` row check here, unlike every other update hook:
+      // `authenticated` has no SELECT privilege on `workers` at all — not even
+      // on `id`. 20260522000003 revoked the table read to hide the pay rates
+      // and, unlike projects / project_scopes / project_variations, never
+      // granted `select (id)` back. Postgres needs SELECT on any column a
+      // statement reads, so this UPDATE's own `where id = …` already fails
+      // with "permission denied for table workers" (verified on a scratch
+      // database with the migrations applied). That's a loud failure, not a
+      // silent one, so the dialog does show it — but worker edits can't work
+      // in live mode until the grant is restored.
       const { error } = await supabase.from('workers').update(patch).eq('id', id);
       if (error) throw error;
     },

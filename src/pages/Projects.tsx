@@ -30,6 +30,7 @@ import { ProjectForm } from '@/components/features/ProjectForm';
 import { ConfirmDialog } from '@/components/features/ConfirmDialog';
 import { formatCurrency } from '@/lib/currency';
 import { useCanSeeFinancials } from '@/lib/permissions';
+import { errorMessage } from '@/lib/errors';
 import type { Project, ProjectStatus } from '@/types/db';
 
 type PendingAction =
@@ -68,7 +69,7 @@ export default function ProjectsPage() {
       }
       setPending(null);
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Action failed');
+      toast.error(errorMessage(e, 'Action failed'));
     }
   };
 

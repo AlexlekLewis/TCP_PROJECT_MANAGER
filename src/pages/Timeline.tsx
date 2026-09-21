@@ -54,6 +54,7 @@ import {
   type Span,
 } from '@/lib/schedule';
 import { cn } from '@/lib/utils';
+import { errorMessage } from '@/lib/errors';
 import type { Project, ProjectScheduleBlock } from '@/types/db';
 
 const ROW_HEIGHT = 52;
@@ -138,7 +139,7 @@ export default function TimelinePage() {
               delete c[part.id];
               return c;
             });
-            toast.error(err instanceof Error ? err.message : 'Could not save the new dates');
+            toast.error(errorMessage(err, 'Could not save the new dates'));
           },
         },
       );
@@ -226,7 +227,7 @@ export default function TimelinePage() {
             `${project.name} — new part on ${format(parseISO(span.start), 'd MMM')}. Drag it to where it belongs.`,
           ),
         onError: (err) =>
-          toast.error(err instanceof Error ? err.message : 'Could not add the part'),
+          toast.error(errorMessage(err, 'Could not add the part')),
       },
     );
   };
@@ -266,7 +267,7 @@ export default function TimelinePage() {
             `${editingProject.name} split at ${format(parseISO(atIso), 'd MMM')} — drag the second part to when you come back.`,
           ),
         onError: (err) =>
-          toast.error(err instanceof Error ? err.message : 'Could not split the part'),
+          toast.error(errorMessage(err, 'Could not split the part')),
       },
     );
     setEditing(null);
@@ -283,7 +284,7 @@ export default function TimelinePage() {
             : `Part removed from ${editingProject.name}.`,
         ),
       onError: (err) =>
-        toast.error(err instanceof Error ? err.message : 'Could not remove the part'),
+        toast.error(errorMessage(err, 'Could not remove the part')),
     });
     setEditing(null);
   };

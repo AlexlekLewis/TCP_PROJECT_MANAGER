@@ -20,6 +20,7 @@ import { formatHours } from '@/lib/hours';
 import { downloadCSV, slugify, variationWorksheetCSV } from '@/lib/csv';
 import { computeVariationTotals, type VariationTotals } from '@/lib/aggregations';
 import { toast } from 'sonner';
+import { errorMessage } from '@/lib/errors';
 import { cn } from '@/lib/utils';
 import type {
   MaterialEntry,
@@ -439,12 +440,21 @@ function VariationDialog({
       toast.error('Enter a non-zero amount, or leave it blank to price later');
       return;
     }
-    await onSubmit({
-      description: description.trim(),
-      amount: amt,
-      notes: notes.trim() || null,
-      status: approvedAlready ? 'approved' : 'pending',
-    });
+    // Without this catch a rejected insert was swallowed whole: no toast, the
+    // dialog just sat there, and pressing Add looked like it did nothing.
+    // The caller closes the dialog only on success, so the typed-in work
+    // survives a failure and can be retried.
+    try {
+      await onSubmit({
+        description: description.trim(),
+        amount: amt,
+        notes: notes.trim() || null,
+        status: approvedAlready ? 'approved' : 'pending',
+      });
+    } catch (e) {
+      toast.error(errorMessage(e, isEdit ? 'Save failed' : 'Could not add the variation'));
+      return;
+    }
     if (!isEdit) {
       setDescription('');
       setAmount('');

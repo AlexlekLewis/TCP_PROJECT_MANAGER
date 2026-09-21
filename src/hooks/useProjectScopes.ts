@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { env } from '@/lib/env';
+import { assertRowsAffected } from '@/lib/errors';
 import { useDemoStore } from './useDemoStore';
 import { demoStore } from '@/lib/demoStore';
 import type { ProjectScope } from '@/types/db';
@@ -65,8 +66,19 @@ export function useUpdateScope() {
         demoStore.updateScope(id, patch);
         return;
       }
-      const { error } = await supabase.from('project_scopes').update(patch).eq('id', id);
+      // `.select('id')` turns the silent case into a loud one: an update RLS
+      // filtered out comes back 204/empty, not as an error. The base table
+      // grants `select (id)` to authenticated, so this is readable by both
+      // roles — as long as they pass a SELECT policy. The manager's comes from
+      // the pending `*_manager_select_scopes_variations` migration; until that
+      // is applied his scope edits change nothing, and this now says so.
+      const { data, error } = await supabase
+        .from('project_scopes')
+        .update(patch)
+        .eq('id', id)
+        .select('id');
       if (error) throw error;
+      assertRowsAffected(data, 'scope');
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['project-scopes'] }),
   });
@@ -80,8 +92,13 @@ export function useDeleteScope() {
         demoStore.deleteScope(id);
         return;
       }
-      const { error } = await supabase.from('project_scopes').delete().eq('id', id);
+      const { data, error } = await supabase
+        .from('project_scopes')
+        .delete()
+        .eq('id', id)
+        .select('id');
       if (error) throw error;
+      assertRowsAffected(data, 'scope', 'delete');
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['project-scopes'] }),
   });

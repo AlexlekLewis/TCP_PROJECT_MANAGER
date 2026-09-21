@@ -39,6 +39,7 @@ import { useProjectScopes } from '@/hooks/useProjectScopes';
 import { useProjectVariations } from '@/hooks/useProjectVariations';
 import { useCanSeeFinancials } from '@/lib/permissions';
 import { cn } from '@/lib/utils';
+import { errorMessage } from '@/lib/errors';
 
 interface Props {
   date: string | null;
@@ -423,7 +424,7 @@ function DayEntryBody({
         `Copied ${validatedEntries.length} entr${validatedEntries.length === 1 ? 'y' : 'ies'} from yesterday`,
       );
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Copy from yesterday failed');
+      toast.error(errorMessage(err, 'Copy from yesterday failed'));
     }
   };
 

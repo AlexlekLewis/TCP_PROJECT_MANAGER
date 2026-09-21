@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { env } from '@/lib/env';
+import { assertRowsAffected } from '@/lib/errors';
 import { useDemoStore } from './useDemoStore';
 import { demoStore } from '@/lib/demoStore';
 import type { ProjectVariation, VariationStatus } from '@/types/db';
@@ -84,8 +85,17 @@ export function useUpdateVariation() {
         demoStore.updateVariation(id, patch);
         return;
       }
-      const { error } = await supabase.from('project_variations').update(patch).eq('id', id);
+      // Admin-only write, but ask for the touched row anyway: an update no
+      // policy lets through returns 204 with zero rows and no error, and
+      // "Variation updated" over a row that never changed is worse than a
+      // failure. `select (id)` is granted on the base table.
+      const { data, error } = await supabase
+        .from('project_variations')
+        .update(patch)
+        .eq('id', id)
+        .select('id');
       if (error) throw error;
+      assertRowsAffected(data, 'variation');
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['project-variations'] }),
   });
@@ -106,8 +116,13 @@ export function useUpdateVariationStatus() {
         patch.approved_at = null;
         patch.approved_by = null;
       }
-      const { error } = await supabase.from('project_variations').update(patch).eq('id', id);
+      const { data, error } = await supabase
+        .from('project_variations')
+        .update(patch)
+        .eq('id', id)
+        .select('id');
       if (error) throw error;
+      assertRowsAffected(data, 'variation');
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['project-variations'] }),
   });

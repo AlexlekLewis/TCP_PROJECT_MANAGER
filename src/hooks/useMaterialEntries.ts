@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { env } from '@/lib/env';
+import { assertRowsAffected } from '@/lib/errors';
 import { queryKeys } from '@/lib/queryKeys';
 import { demoStore } from '@/lib/demoStore';
 import { useDemoStore } from './useDemoStore';
@@ -64,8 +65,13 @@ export function useDeleteMaterialEntry() {
         demoStore.deleteMaterialEntry(id);
         return;
       }
-      const { error } = await supabase.from('material_entries').delete().eq('id', id);
+      const { data, error } = await supabase
+        .from('material_entries')
+        .delete()
+        .eq('id', id)
+        .select('id');
       if (error) throw error;
+      assertRowsAffected(data, 'material entry', 'delete');
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.materialEntries() }),
   });

@@ -58,6 +58,7 @@ import { formatHours } from '@/lib/hours';
 import { useAuth } from '@/context/AuthContext';
 import { useCanSeeFinancials } from '@/lib/permissions';
 import { cn } from '@/lib/utils';
+import { errorMessage } from '@/lib/errors';
 
 export default function ProjectDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -118,7 +119,7 @@ export default function ProjectDetailPage() {
       });
       toast.success('Project marked as reviewed');
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Failed');
+      toast.error(errorMessage(e, 'Could not mark the project reviewed'));
     }
   };
 
@@ -602,7 +603,7 @@ export default function ProjectDetailPage() {
             toast.success(`Archived ${project.name}`);
             setPending(null);
           } catch (e) {
-            toast.error(e instanceof Error ? e.message : 'Archive failed');
+            toast.error(errorMessage(e, 'Archive failed'));
           }
         }}
         onClose={() => setPending(null)}
@@ -619,7 +620,7 @@ export default function ProjectDetailPage() {
             toast.success(`Restored ${project.name}`);
             setPending(null);
           } catch (e) {
-            toast.error(e instanceof Error ? e.message : 'Restore failed');
+            toast.error(errorMessage(e, 'Restore failed'));
           }
         }}
         onClose={() => setPending(null)}
@@ -638,7 +639,7 @@ export default function ProjectDetailPage() {
             setPending(null);
             navigate('/projects');
           } catch (e) {
-            toast.error(e instanceof Error ? e.message : 'Delete failed');
+            toast.error(errorMessage(e, 'Delete failed'));
           }
         }}
         onClose={() => setPending(null)}
